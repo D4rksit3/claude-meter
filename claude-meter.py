@@ -23,7 +23,7 @@ from gi.repository import Gdk, GLib, Gtk  # noqa: E402
 DATA = os.path.expanduser("~/.cache/claude-meter.json")
 CONF_DIR = os.path.expanduser("~/.config/claude-meter")
 CONF = os.path.join(CONF_DIR, "config.json")
-STALE_AFTER = 15 * 60  # pasado esto, los porcentajes pueden estar desfasados
+STALE_AFTER = 60 * 60  # pasado esto, el uso desde otros lados (web, móvil) puede no estar reflejado
 
 DAYS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 
@@ -63,7 +63,7 @@ def until(epoch):
 def ago(epoch):
     mins = int((time.time() - epoch) // 60)
     if mins < 1:
-        return "recién"
+        return "ahora"
     if mins < 60:
         return "hace {} min".format(mins)
     return "hace {} h".format(mins // 60)
@@ -167,6 +167,8 @@ class Meter(Gtk.Window):
         box.pack_start(Gtk.Box(), False, False, 2)
         self.week = self._limit_row(box, "Semana")
         self.foot = self._label("foot")
+        self.foot.set_tooltip_text("Los datos llegan cada vez que Claude Code responde. Sin usarlo no cambian, "
+                                   "salvo el reinicio de cada ventana, que el widget calcula solo.")
         box.pack_start(self.foot, False, False, 2)
         self.show_all()
 
@@ -224,7 +226,7 @@ class Meter(Gtk.Window):
             ctx.add_class("stale")
         else:
             ctx.remove_class("stale")
-        self.foot.set_text("Actualizado " + ago(updated))
+        self.foot.set_text("Último uso de Claude " + ago(updated))
         return True
 
 

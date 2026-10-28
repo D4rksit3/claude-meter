@@ -5,7 +5,7 @@
 Widget pequeño para Linux que se queda **siempre encima** de las demás ventanas y muestra cuánto llevas usado de tu plan de Claude:
 
 - **Sesión (5 h)** y **Semana**: porcentaje usado, barra (verde → ámbar desde 60 % → rojo desde 85 %) y cuándo se reinicia
-- modelo en uso y hace cuánto se actualizó (se pone ámbar si el dato tiene más de 15 min)
+- modelo en uso y hace cuánto fue el último uso de Claude Code (se pone ámbar pasada 1 hora)
 
 Hecho con Python + GTK 3. Probado en Ubuntu 26.04 con GNOME (Wayland).
 
@@ -19,7 +19,8 @@ lo imprime abajo en la terminal (`Opus · 5h 17% · semana 31% · contexto 13%`)
 `~/.cache/claude-meter.json`. El widget solo lee ese archivo cada 5 s; no se conecta a nada ni usa credenciales.
 
 Requiere una suscripción de Claude (Pro/Max/Team): con API key no hay límites de plan que mostrar.
-Los números se actualizan cuando usas Claude Code; si no lo usas, el pie te avisa que el dato está viejo.
+Los números se actualizan solo cuando Claude Code responde: si no lo usas, no cambian (es normal ver "hace 20 min").
+El uso que hagas desde claude.ai o el móvil aparece recién en la siguiente respuesta de Claude Code.
 Cuando una ventana pasa su hora de reinicio, el widget la muestra en 0 %.
 
 ## Requisitos
