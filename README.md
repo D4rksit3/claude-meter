@@ -1,6 +1,6 @@
 # Claude meter
 
-![Medidor con la sesión al 67 % y la semana al 31 %](docs/captura.png)
+![El muñequito "¡Estoy feliz!" con la tarjeta de uso abierta al pasar el mouse](docs/captura.png)
 
 Widget pequeño para Linux que se queda **siempre encima** de las demás ventanas. En reposo solo se ve el muñequito, sin fondo, con un globito que dice cómo está ("¡Estoy feliz!"); **al pasar el mouse** aparece cuánto llevas usado de tu plan de Claude:
 
