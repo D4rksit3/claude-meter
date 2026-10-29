@@ -6,6 +6,7 @@ Widget pequeño para Linux que se queda **siempre encima** de las demás ventana
 
 - **Sesión (5 h)** y **Semana**: porcentaje usado, barra (verde → ámbar desde 60 % → rojo desde 85 %) y cuándo se reinicia
 - el **muñequito pixelado de Claude Code**, animado, que cambia de ánimo según el uso: feliz saltando y saludando con poco (< 50 %), tranquila (< 75 %), cansada (< 90 %), triste con lagrimita (< 100 %) y agotada al llegar al límite, con la hora en que vuelve
+- **mientras Claude trabaja** el muñeco teclea ("Trabajando…") y **cuando te pregunta algo o pide permiso** se rasca la cabeza con un signo de pregunta ("Tengo una duda…")
 - modelo en uso y hace cuánto fue el último uso de Claude Code (se pone ámbar pasada 1 hora)
 
 Hecho con Python + GTK 3. Probado en Ubuntu 26.04 con GNOME (Wayland).
@@ -23,6 +24,14 @@ Requiere una suscripción de Claude (Pro/Max/Team): con API key no hay límites 
 Los números se actualizan solo cuando Claude Code responde: si no lo usas, no cambian (es normal ver "hace 20 min").
 El uso que hagas desde claude.ai o el móvil aparece recién en la siguiente respuesta de Claude Code.
 Cuando una ventana pasa su hora de reinicio, el widget la muestra en 0 %.
+
+### Actividad (teclea / duda)
+
+`activity.py` es un *hook* de Claude Code que se registra en `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
+`PermissionRequest`, `Notification`, `Stop` y `SessionEnd`. Anota por sesión si Claude está trabajando, esperando
+tu respuesta (`AskUserQuestion`, `ExitPlanMode`, pedidos de permiso) o libre, en `~/.cache/claude-meter-activity.json`.
+No imprime nada ni bloquea. Si hay varias sesiones, una pregunta pendiente en cualquiera gana.
+Igual que la status line, acepta `CLAUDE_METER_ACTIVITY` y `CLAUDE_METER_OWNER`.
 
 ## Requisitos
 

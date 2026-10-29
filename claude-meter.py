@@ -25,6 +25,10 @@ gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Gdk, GdkPixbuf, GLib, Gtk  # noqa: E402
 
 DATA = os.path.expanduser("~/.cache/claude-meter.json")
+ACTIVITY = os.path.expanduser("~/.cache/claude-meter-activity.json")  # lo escribe activity.py (hooks)
+WORK_STALE = 10 * 60    # "trabajando" sin eventos nuevos por más de esto: probablemente se cortó
+ASK_STALE = 2 * 3600    # una pregunta sin responder deja de mostrarse pasado esto
+ACTIVITY_TEXT = {"work": "Trabajando…", "ask": "Tengo una duda…"}
 CONF_DIR = os.path.expanduser("~/.config/claude-meter")
 CONF = os.path.join(CONF_DIR, "config.json")
 STALE_AFTER = 60 * 60  # pasado esto, el uso desde otros lados (web, móvil) puede no estar reflejado
@@ -80,10 +84,11 @@ def until(epoch):
     return "{}h {:02d}m".format(h, m) if h else "{} min".format(m)
 
 
-def mascot_svg(mood, t, px=MASCOT, crop=True):
+def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
     """Un cuadro del muñequito pixelado de Claude Code, en una caja de 56x56.
 
     Rejilla de 18x5 celdas: cuerpo, dos ojitos, bracitos a los lados y cuatro patitas.
+    mood "work" (teclea) y "ask" (tiene una duda) toman el color del ánimo de uso que indica tint.
     """
     ux, uy = 3, 6               # cada pixel es el doble de alto que de ancho, como las celdas de la terminal
     w = 2 * math.pi / LOOP      # frecuencias enteras de w: el ciclo cierra sin saltos
@@ -94,8 +99,12 @@ def mascot_svg(mood, t, px=MASCOT, crop=True):
     x0 = 1 + sway * ux
     y0 = 14 + hop + sink
     # se apaga el color a medida que se cansa
-    color = {"happy": "#e8774f", "ok": "#d97757", "tired": "#c98463", "sad": "#b58c79",
-             "empty": "#978a84", "sleep": "#b58c79"}[mood]
+    colors = {"happy": "#e8774f", "ok": "#d97757", "tired": "#c98463", "sad": "#b58c79",
+              "empty": "#978a84", "sleep": "#b58c79"}
+    color = colors.get(mood) or colors.get(tint, colors["ok"])
+    tap = math.sin(w * 22 * t) > 0  # alterna manos al teclear
+    if mood == "work":
+        y0 += 0.5 if tap else 0
     hole = "#161616"
 
     def px_rect(cx, cy, cw=1, ch=1, fill=None, extra=""):
@@ -110,6 +119,13 @@ def mascot_svg(mood, t, px=MASCOT, crop=True):
     if mood == "happy":
         up = math.sin(w * 6 * t) > 0
         parts += [px_rect(1, 1 if up else 2, 2), px_rect(15, 2 if up else 1, 2)]
+    elif mood == "work":   # manos sobre el teclado, una y otra
+        parts += [px_rect(1.5, 2.7 if tap else 3.1, 1.5), px_rect(15, 3.1 if tap else 2.7, 1.5)]
+    elif mood == "ask":    # una mano rascándose la cabeza
+        scratch = math.sin(w * 8 * t) * 0.12
+        parts += [px_rect(1, 2, 2),
+                  px_rect(16, 0.9, 1, 1.6),                       # brazo hacia arriba
+                  px_rect(14.6, 0.35 + scratch, 2.4, 0.55)]       # mano sobre la cabeza
     elif mood in ("sad", "empty", "tired"):
         parts += [px_rect(1.5, 3, 1.5), px_rect(15, 3, 1.5)]
     else:
@@ -123,10 +139,14 @@ def mascot_svg(mood, t, px=MASCOT, crop=True):
     # ojos: huecos en la cabeza
     blink = (t % (LOOP / 2)) < 0.15
     for ex in (5, 12):
-        if mood == "sleep" or (blink and mood in ("happy", "ok", "tired")):
+        if mood == "sleep" or (blink and mood in ("happy", "ok", "tired", "work", "ask")):
             parts.append(px_rect(ex, 1.65, 1, 0.2, hole))
         elif mood == "tired":
             parts.append(px_rect(ex, 1.4, 1, 0.6, hole))
+        elif mood == "work":   # mirando el teclado
+            parts.append(px_rect(ex, 1.3, 1, 0.7, hole))
+        elif mood == "ask":    # mirando hacia arriba, pensando
+            parts.append(px_rect(ex + 0.3, 0.45, 1, 0.8, hole))
         elif mood == "empty":
             cx, cy = x0 + (ex + 0.5) * ux, y0 + 1.5 * uy
             parts.append('<path d="M{0:.2f} {1:.2f} l{2} {2} M{3:.2f} {1:.2f} l-{2} {2}" stroke="{4}" '
@@ -139,6 +159,17 @@ def mascot_svg(mood, t, px=MASCOT, crop=True):
         drop = t / LOOP * 4 % 1
         parts.append(px_rect(5.2, 2 + drop * 2.5, 0.6, 0.3, "#6db3e8",
                              ' opacity="{:.2f}"'.format(1 - drop)))
+    if mood == "work":   # teclado delante, tapando las patitas, con teclas que se iluminan
+        parts.append(px_rect(2, 3.35, 14, 0.95, "#3a3a3a"))
+        lit = {(int(t * 10) * 7) % 22, (int(t * 10) * 13 + 5) % 22}
+        for k in range(22):
+            row, col = divmod(k, 11)
+            parts.append(px_rect(2.5 + col * 1.2, 3.5 + row * 0.35, 0.8, 0.22,
+                                 "#f2f2f2" if k in lit else "#666666"))
+    if mood == "ask":    # signo de pregunta que flota
+        bob = math.sin(w * 4 * t) * 1.5
+        parts.append('<text x="47" y="{:.1f}" font-family="sans-serif" font-weight="bold" font-size="14" '
+                     'fill="#ffd166" stroke="#161616" stroke-width="0.8" paint-order="stroke">?</text>'.format(19 + bob))
     if mood in ("sleep", "empty"):
         for k in range(2):
             ph = (t / LOOP * 4 + k * 0.5) % 1
@@ -169,6 +200,8 @@ class Meter(Gtk.Window):
         self.config = load_json(CONF, {})
         self.save_pos_id = 0
         self.mood = "sleep"
+        self.mood_text = MOOD_TEXT["sleep"]
+        self.activity = None  # "work", "ask" o None
         self.dragging = False
         self.drag_end_id = 0
         self.hide_id = 0
@@ -186,6 +219,7 @@ class Meter(Gtk.Window):
         self.refresh()
         GLib.timeout_add_seconds(5, self.refresh)
         GLib.timeout_add(FRAME_MS, self._animate)
+        GLib.timeout_add(1000, self._poll_activity)
 
     # ---------- ventana del muñeco ----------
     def _setup_css(self):
@@ -383,10 +417,11 @@ class Meter(Gtk.Window):
 
     # ---------- mascota ----------
     def _frame(self, mood, i):
-        frames = self.frames.setdefault(mood, [None] * int(LOOP * 1000 / FRAME_MS))
+        key = (mood, self.mood)  # trabajar/dudar se pintan con el color del ánimo de uso
+        frames = self.frames.setdefault(key, [None] * int(LOOP * 1000 / FRAME_MS))
         if frames[i] is None:  # se dibuja la primera vez que se necesita y queda en caché
             loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
-            loader.write(mascot_svg(mood, i * FRAME_MS / 1000).encode())
+            loader.write(mascot_svg(mood, i * FRAME_MS / 1000, tint=self.mood).encode())
             loader.close()
             frames[i] = loader.get_pixbuf()
         return frames[i]
@@ -395,13 +430,29 @@ class Meter(Gtk.Window):
         if self.get_mapped():
             n = int(LOOP * 1000 / FRAME_MS)
             i = int((time.time() - self.t0) * 1000 / FRAME_MS) % n
-            self.mascot.set_from_pixbuf(self._frame(self.mood, i))
+            self.mascot.set_from_pixbuf(self._frame(self.activity or self.mood, i))
         return True
+
+    def _poll_activity(self):
+        sessions = load_json(ACTIVITY, {})
+        now = time.time()
+        states = {v.get("state") for v in sessions.values()
+                  if now - v.get("at", 0) < (ASK_STALE if v.get("state") == "asking" else WORK_STALE)}
+        # una pregunta pendiente en cualquier sesión gana: es lo que requiere tu atención
+        activity = "ask" if "asking" in states else "work" if "working" in states else None
+        if activity != self.activity:
+            self.activity = activity
+            self._update_bubble()
+        return True
+
+    def _update_bubble(self):
+        self.mood_lbl.set_text(ACTIVITY_TEXT.get(self.activity) or self.mood_text)
 
     def _set_mood(self, data):
         if not data:
             self.mood = "sleep"
-            self.mood_lbl.set_text(MOOD_TEXT["sleep"])
+            self.mood_text = MOOD_TEXT["sleep"]
+            self._update_bubble()
             return
         now = time.time()
         live = [w for w in (data.get("five_hour"), data.get("seven_day"))
@@ -412,7 +463,8 @@ class Meter(Gtk.Window):
         if self.mood == "empty":
             full = min(w["resets_at"] for w in live if float(w.get("used_percentage") or 0) >= 100)
             text += (" · vuelvo en " if full - now < 86400 else " · vuelvo el ") + until(full)
-        self.mood_lbl.set_text(text)
+        self.mood_text = text
+        self._update_bubble()
 
     # ---------- datos ----------
     def _set_limit(self, row, win):
