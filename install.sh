@@ -10,6 +10,7 @@ SETTINGS="$HOME/.claude/settings.json"
 
 install -Dm755 claude-meter.py "$BIN"
 install -Dm755 statusline.py "$HOOK"
+install -Dm644 claude-meter.svg "$HOME/.local/share/icons/hicolor/scalable/apps/claude-meter.svg"
 mkdir -p "$APPS"
 sed "s|@BIN@|$BIN|" claude-meter.desktop > "$APPS/claude-meter.desktop"
 

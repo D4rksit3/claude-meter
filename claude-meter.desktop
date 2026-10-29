@@ -3,6 +3,6 @@ Type=Application
 Name=Claude meter
 Comment=Medidor de uso del plan de Claude, siempre encima
 Exec=python3 @BIN@
-Icon=utilities-system-monitor
+Icon=claude-meter
 Terminal=false
 Categories=Utility;
