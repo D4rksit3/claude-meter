@@ -120,14 +120,10 @@ LOOP = 6.6  # segundos; todo movimiento de la mascota se repite en este ciclo y 
 
 # ánimo según el mayor de los dos porcentajes: (hasta %, ánimo)
 MOODS = [(50, "happy"), (75, "ok"), (90, "tired"), (100, "sad")]
-MOOD_TEXT = {
-    "happy": "¡Estoy feliz!",
-    "ok": "Estoy bien",
-    "tired": "Estoy cansado…",
-    "sad": "Estoy triste",
-    "empty": "Estoy agotado",
-    "sleep": "Zzz…",
-}
+# carita del globito según el consumo (el mayor de sesión y semana): (hasta %, carita)
+FACES = [(20, "😄"), (40, "😊"), (60, "🙂"), (75, "😐"), (90, "😓"), (100, "😫")]
+FACE_EMPTY = "😵"
+FACE_SLEEP = "😴"
 
 CSS = b"""
 window { background-color: transparent; }
@@ -135,6 +131,7 @@ window { background-color: transparent; }
 .head { color: #d97757; font-weight: bold; }
 .bubble { color: #ffffff; font-size: 9pt; font-weight: bold; background-color: rgba(22, 22, 22, 0.85);
           border-radius: 9px; padding: 2px 8px; }
+.bubble.face { font-size: 14pt; padding: 0 5px; }
 .model { color: #a7a7a7; font-size: 9pt; }
 .name { color: #ffffff; font-size: 9pt; }
 .pct { color: #ffffff; font-weight: bold; font-size: 9pt; }
@@ -286,7 +283,7 @@ class Meter(Gtk.Window):
         self.config = load_json(CONF, {})
         self.save_pos_id = 0
         self.mood = "sleep"
-        self.mood_text = MOOD_TEXT["sleep"]
+        self.mood_text = FACE_SLEEP
         self.activity = None  # "work", "ask" o None
         self.data = None
         self.last_seen = 0      # último momento en que se usó Claude Code
@@ -725,13 +722,16 @@ class Meter(Gtk.Window):
         if self.activity == "ask":
             text = ACTIVITY_TEXT["ask"]
         else:
-            text = chat or ACTIVITY_TEXT.get(self.activity) or ("Zzz… te espero" if self.away else self.mood_text)
+            text = chat or ACTIVITY_TEXT.get(self.activity) or (FACE_SLEEP if self.away else self.mood_text)
         self.mood_lbl.set_text(text)
+        # solo carita: más grande
+        ctx = self.mood_lbl.get_style_context()
+        ctx.add_class("face") if len(text) <= 2 else ctx.remove_class("face")
 
     def _set_mood(self, data):
         if not data:
             self.mood = "sleep"
-            self.mood_text = MOOD_TEXT["sleep"]
+            self.mood_text = FACE_SLEEP
             self._update_bubble()
             return
         now = time.time()
@@ -739,10 +739,10 @@ class Meter(Gtk.Window):
                 if w and w.get("resets_at", 0) > now]
         used = max([float(w.get("used_percentage") or 0) for w in live] or [0])
         self.mood = next((m for limit, m in MOODS if used < limit), "empty")
-        text = MOOD_TEXT[self.mood]
+        text = next((face for limit, face in FACES if used < limit), FACE_EMPTY)
         if self.mood == "empty":
             full = min(w["resets_at"] for w in live if float(w.get("used_percentage") or 0) >= 100)
-            text += (" · vuelvo en " if full - now < 86400 else " · vuelvo el ") + until(full)
+            text += (" vuelvo en " if full - now < 86400 else " vuelvo el ") + until(full)
         self.mood_text = text
         self._update_bubble()
 
