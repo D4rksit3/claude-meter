@@ -168,6 +168,8 @@ class Meter(Gtk.Window):
         self.save_pos_id = 0
         self.mood = "sleep"
         self.shift = None  # (dx, dy) mientras la ventana está corrida para mostrar el detalle
+        self.dragging = False
+        self.drag_end_id = 0
         self.hide_id = 0
         self.t0 = time.time()
         self.frames = {}  # ánimo -> lista de pixbufs del ciclo
@@ -207,7 +209,20 @@ class Meter(Gtk.Window):
         self.connect("configure-event", self._on_configure)
         self.connect("destroy", Gtk.main_quit)
 
+    def _end_drag_later(self):
+        # el gestor de ventanas no avisa al soltar: se da por terminado tras un rato sin movimiento
+        if self.drag_end_id:
+            GLib.source_remove(self.drag_end_id)
+        self.drag_end_id = GLib.timeout_add(700, self._drag_done)
+
+    def _drag_done(self):
+        self.drag_end_id = 0
+        self.dragging = False
+        return False
+
     def _on_configure(self, *_):
+        if self.dragging:
+            self._end_drag_later()
         if self.save_pos_id:
             GLib.source_remove(self.save_pos_id)
         self.save_pos_id = GLib.timeout_add(600, self._save_pos)
@@ -298,6 +313,8 @@ class Meter(Gtk.Window):
 
     # ---------- detalle al pasar el mouse ----------
     def _on_enter(self, widget, event):
+        if self.dragging:
+            return False
         if self.hide_id:
             GLib.source_remove(self.hide_id)
             self.hide_id = 0
@@ -334,15 +351,38 @@ class Meter(Gtk.Window):
 
     def _on_press(self, widget, event):
         if event.button == 1 and event.type == Gdk.EventType.BUTTON_PRESS:
-            self.begin_move_drag(event.button, int(event.x_root), int(event.y_root), event.time)
+            # se arrastra solo el muñeco: cerrar el detalle primero y no reabrirlo hasta soltar
+            self.dragging = True
+            if self.hide_id:
+                GLib.source_remove(self.hide_id)
+                self.hide_id = 0
+            args = (event.button, int(event.x_root), int(event.y_root), event.time)
+            if self.details.get_visible():
+                self._hide_details()
+                GLib.timeout_add(60, lambda: self.begin_move_drag(*args))  # tras aplicar el tamaño chico
+            else:
+                self.begin_move_drag(*args)
+            self._end_drag_later()
         elif event.button == 3:
             menu = Gtk.Menu()
+            item = Gtk.MenuItem(label="Llevar a la esquina")
+            item.connect("activate", lambda *_: self._to_corner())
+            menu.append(item)
             item = Gtk.MenuItem(label="Cerrar medidor")
             item.connect("activate", lambda *_: self.destroy())
             menu.append(item)
             menu.show_all()
             menu.popup_at_pointer(event)
         return True
+
+    def _to_corner(self):
+        """Pega el muñeco a la esquina inferior derecha del área útil (sin tapar barras del sistema)."""
+        if self.details.get_visible():
+            self._hide_details()
+        mon = Gdk.Display.get_default().get_monitor_at_window(self.get_window())
+        area = mon.get_workarea()
+        size = self.get_preferred_size()[1]
+        self.move(area.x + area.width - size.width - 8, area.y + area.height - size.height - 8)
 
     # ---------- mascota ----------
     def _frame(self, mood, i):
