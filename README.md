@@ -7,7 +7,8 @@ Widget pequeño para Linux que se queda **siempre encima** de las demás ventana
 - **Sesión (5 h)** y **Semana**: porcentaje usado, barra (verde → ámbar desde 60 % → rojo desde 85 %) y cuándo se reinicia
 - el **muñequito pixelado de Claude Code**, animado, que cambia de ánimo según el uso: feliz saltando y saludando con poco (< 50 %), tranquila (< 75 %), cansada (< 90 %), triste con lagrimita (< 100 %) y agotada al llegar al límite, con la hora en que vuelve
 - **mientras Claude trabaja** el muñeco teclea ("Trabajando…") y **cuando te pregunta algo o pide permiso** se rasca la cabeza con un signo de pregunta ("Tengo una duda…")
-- **si no lo usas por 15 min**, el muñeco intenta conversar cada pocos minutos ("¿Hacemos algo?", "Te queda 80% de esta sesión, ¡aprovechémoslo!"…) saludando con el bracito; se apaga con clic derecho → *Que me hable cuando no lo uso*
+- **si no lo usas por 15 min**, el muñeco intenta conversar cada pocos minutos saludando con el bracito: frases de **motivación** ("Paso a paso se llega lejos", "Hecho es mejor que perfecto"), de **cuidado** ("¿Tomaste agua? 💧", "Estira la espalda un ratito") y según el contexto ("¡Buenos días! ¿Empezamos?", "Te queda 80% de esta sesión, ¡aprovechémoslo!"); se apaga con clic derecho → *Que me hable cuando no lo uso*
+- **cuando Claude termina una tarea** te felicita ("¡Listo! Buen trabajo 💪", "¡Misión cumplida!")
 - **un clic** sobre el muñeco y reacciona ("¡Ey!", "¡Jaja, cosquillas!")
 - modelo en uso y hace cuánto fue el último uso de Claude Code (se pone ámbar pasada 1 hora)
 

@@ -43,6 +43,33 @@ IDLE_LINES = [
     "¿Revisamos algo juntos?",
     "Aquí sigo, por si acaso",
 ]
+MOTIVATION_LINES = [
+    "Paso a paso se llega lejos 🚶",
+    "Lo difícil hoy es fácil mañana",
+    "Hecho es mejor que perfecto",
+    "Un commit a la vez 💪",
+    "Tú puedes con esto",
+    "Cada bug arreglado cuenta",
+    "La constancia gana a la prisa",
+    "Hoy es buen día para avanzar",
+    "Empieza por lo pequeño",
+    "Lo que no se mide no mejora 📈",
+    "Respira: un problema a la vez",
+    "Los errores también enseñan",
+    "Vas mejor de lo que crees ✨",
+    "Primero que funcione, luego que brille",
+    "Si te trabas, explícamelo a mí 🦆",
+    "Disciplina > motivación",
+]
+CARE_LINES = [
+    "¿Tomaste agua? 💧",
+    "Estira la espalda un ratito",
+    "Mira lejos 20 segundos 👀",
+    "¿Ya comiste algo?",
+    "Una pausa también es avanzar ☕",
+    "Hombros abajo, respira hondo",
+]
+DONE_LINES = ["¡Listo! Buen trabajo 💪", "¡Terminamos! 🎉", "¡Hecho! ¿Qué sigue?", "¡Eso quedó! ✨", "¡Misión cumplida!"]
 POKE_LINES = ["¡Ey!", "¡Jaja, cosquillas!", "¿Me necesitas?", "¡Aquí estoy!", "¡Hola! 👋", "¿Trabajamos?"]
 CONF_DIR = os.path.expanduser("~/.config/claude-meter")
 CONF = os.path.join(CONF_DIR, "config.json")
@@ -344,6 +371,9 @@ class Meter(Gtk.Window):
         # globito con el ánimo y el muñeco, sin fondo
         self.mood_lbl = self._label("bubble")
         self.mood_lbl.set_halign(Gtk.Align.END)
+        self.mood_lbl.set_line_wrap(True)       # frases largas en dos líneas, no un globito eterno
+        self.mood_lbl.set_max_width_chars(26)
+        self.mood_lbl.set_justify(Gtk.Justification.RIGHT)
         self.mascot = Gtk.Image()
         self.mascot.set_size_request(MASCOT, round(MASCOT * 44 / 56))
         self.mascot.set_halign(Gtk.Align.END)
@@ -473,7 +503,8 @@ class Meter(Gtk.Window):
     def _idle_line(self):
         now = time.time()
         hour = time.localtime().tm_hour
-        lines = list(IDLE_LINES)
+        # mezcla: charla, motivación y cuidado personal (la motivación pesa más)
+        lines = IDLE_LINES + MOTIVATION_LINES * 2 + CARE_LINES
         if 6 <= hour < 12:
             lines.append("¡Buenos días! ¿Empezamos?")
         elif hour >= 22 or hour < 5:
@@ -529,7 +560,10 @@ class Meter(Gtk.Window):
         if activity:
             self.last_seen = now
         if activity != self.activity:
+            finished = self.activity == "work" and activity is None
             self.activity = activity
+            if finished:  # Claude terminó una tarea: festejo corto
+                self._say(random.choice(DONE_LINES), 5)
             self._update_bubble()
         self._tick_chat(now)
         return True
