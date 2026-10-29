@@ -5,6 +5,7 @@ Los datos los escribe la status line de Claude Code en ~/.cache/claude-meter.jso
 cada vez que Claude responde; este widget solo los lee.
 
 - La mascota cambia de ánimo según el uso: feliz con poco, cansada y triste al acercarse al límite.
+- En reposo solo se ve el muñeco y un globito con su ánimo; al pasar el mouse aparecen los porcentajes.
 - Arrastrar con clic izquierdo para moverlo (recuerda la posición).
 - Clic derecho: cerrar.
 """
@@ -29,26 +30,27 @@ CONF = os.path.join(CONF_DIR, "config.json")
 STALE_AFTER = 60 * 60  # pasado esto, el uso desde otros lados (web, móvil) puede no estar reflejado
 
 DAYS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
-MASCOT = 56
+MASCOT = 64
 FRAME_MS = 80
 LOOP = 6.6  # segundos; todo movimiento de la mascota se repite en este ciclo y así se dibuja una sola vez
 
 # ánimo según el mayor de los dos porcentajes: (hasta %, ánimo)
 MOODS = [(50, "happy"), (75, "ok"), (90, "tired"), (100, "sad")]
 MOOD_TEXT = {
-    "happy": "¡Con toda la energía!",
-    "ok": "Vamos bien",
-    "tired": "Ya se va cansando…",
-    "sad": "Casi sin energía",
-    "empty": "Agotado",
-    "sleep": "Zzz… aún sin datos",
+    "happy": "¡Estoy feliz!",
+    "ok": "Estoy bien",
+    "tired": "Estoy cansado…",
+    "sad": "Estoy triste",
+    "empty": "Estoy agotado",
+    "sleep": "Zzz…",
 }
 
 CSS = b"""
 window { background-color: transparent; }
 .card { background-color: rgba(22, 22, 22, 0.95); border-radius: 12px; }
 .head { color: #d97757; font-weight: bold; }
-.mood { color: #e8e8e8; font-size: 9pt; }
+.bubble { color: #ffffff; font-size: 9pt; font-weight: bold; background-color: rgba(22, 22, 22, 0.85);
+          border-radius: 9px; padding: 2px 8px; }
 .model { color: #a7a7a7; font-size: 9pt; }
 .name { color: #ffffff; font-size: 9pt; }
 .pct { color: #ffffff; font-weight: bold; font-size: 9pt; }
@@ -163,6 +165,8 @@ class Meter(Gtk.Window):
         self.config = load_json(CONF, {})
         self.save_pos_id = 0
         self.mood = "sleep"
+        self.shift = 0
+        self.hide_id = 0
         self.t0 = time.time()
         self.frames = {}  # ánimo -> lista de pixbufs del ciclo
         self._setup_window()
@@ -208,6 +212,8 @@ class Meter(Gtk.Window):
 
     def _save_pos(self):
         self.save_pos_id = 0
+        if self.shift:  # posición desplazada temporalmente para que quepa el detalle
+            return False
         self.config["pos"] = list(self.get_position())
         os.makedirs(CONF_DIR, exist_ok=True)
         with open(CONF, "w") as f:
@@ -234,11 +240,28 @@ class Meter(Gtk.Window):
         return pct, bar, reset
 
     def _build_ui(self):
-        card = Gtk.EventBox()
-        card.get_style_context().add_class("card")
-        card.connect("button-press-event", self._on_press)
-        self.add(card)
+        root = Gtk.EventBox()
+        root.add_events(Gdk.EventMask.ENTER_NOTIFY_MASK | Gdk.EventMask.LEAVE_NOTIFY_MASK)
+        root.connect("button-press-event", self._on_press)
+        root.connect("enter-notify-event", self._on_enter)
+        root.connect("leave-notify-event", self._on_leave)
+        self.add(root)
 
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        root.add(outer)
+
+        # en reposo: globito con el ánimo y el muñeco, sin fondo
+        self.mood_lbl = self._label("bubble")
+        self.mood_lbl.set_halign(Gtk.Align.START)
+        self.mascot = Gtk.Image()
+        self.mascot.set_size_request(MASCOT, MASCOT)
+        self.mascot.set_halign(Gtk.Align.START)
+        outer.pack_start(self.mood_lbl, False, False, 0)
+        outer.pack_start(self.mascot, False, False, 0)
+
+        # al pasar el mouse: tarjeta con los porcentajes
+        self.details = Gtk.EventBox()
+        self.details.get_style_context().add_class("card")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         box.set_size_request(210, -1)
         # el padding de CSS no aplica a un EventBox; el margen va en la caja
@@ -246,36 +269,63 @@ class Meter(Gtk.Window):
         box.set_margin_bottom(8)
         box.set_margin_start(12)
         box.set_margin_end(12)
-        card.add(box)
+        self.details.add(box)
 
-        head = Gtk.Box(spacing=8)
-        self.mascot = Gtk.Image()
-        self.mascot.set_size_request(MASCOT, MASCOT)
-        head.pack_start(self.mascot, False, False, 0)
-        info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        info.set_valign(Gtk.Align.CENTER)
         top = Gtk.Box(spacing=6)
         title = self._label("head")
         title.set_text("Claude")
         self.model = self._label("model", xalign=1)
         top.pack_start(title, False, False, 0)
         top.pack_end(self.model, False, False, 0)
-        self.mood_lbl = self._label("mood")
-        self.mood_lbl.set_line_wrap(True)
-        self.mood_lbl.set_max_width_chars(22)
-        info.pack_start(top, False, False, 0)
-        info.pack_start(self.mood_lbl, False, False, 0)
-        head.pack_start(info, True, True, 0)
-        box.pack_start(head, False, False, 0)
-
+        box.pack_start(top, False, False, 0)
         self.five = self._limit_row(box, "Sesión (5 h)")
         box.pack_start(Gtk.Box(), False, False, 2)
         self.week = self._limit_row(box, "Semana")
         self.foot = self._label("foot")
-        self.foot.set_tooltip_text("Los datos llegan cada vez que Claude Code responde. Sin usarlo no cambian, "
-                                   "salvo el reinicio de cada ventana, que el widget calcula solo.")
         box.pack_start(self.foot, False, False, 2)
+        outer.pack_start(self.details, False, False, 0)
+
         self.show_all()
+        self.details.set_no_show_all(True)
+        self.details.hide()
+
+    # ---------- detalle al pasar el mouse ----------
+    def _on_enter(self, widget, event):
+        if self.hide_id:
+            GLib.source_remove(self.hide_id)
+            self.hide_id = 0
+        if not self.details.get_visible():
+            self.details.show()
+            GLib.idle_add(self._fit_on_screen)
+        return False
+
+    def _on_leave(self, widget, event):
+        # al entrar a un hijo también llega un "leave": ese no cuenta
+        if event.detail != Gdk.NotifyType.INFERIOR and not self.hide_id:
+            self.hide_id = GLib.timeout_add(250, self._hide_details)
+        return False
+
+    def _hide_details(self):
+        self.hide_id = 0
+        self.details.hide()
+        self.resize(1, 1)
+        if self.shift:
+            x, y = self.get_position()
+            self.move(x, y + self.shift)
+            self.shift = 0
+        return False
+
+    def _fit_on_screen(self):
+        """Si el detalle se sale por abajo, sube la ventana mientras se muestra."""
+        mon = Gdk.Display.get_default().get_monitor_at_window(self.get_window())
+        area = mon.get_workarea()
+        x, y = self.get_position()
+        h = self.get_preferred_size()[1].height  # el tamaño real aún no se aplicó
+        over = y + h - (area.y + area.height)
+        if over > 0:
+            self.shift = over
+            self.move(x, y - over)
+        return False
 
     def _on_press(self, widget, event):
         if event.button == 1 and event.type == Gdk.EventType.BUTTON_PRESS:
@@ -319,7 +369,7 @@ class Meter(Gtk.Window):
         text = MOOD_TEXT[self.mood]
         if self.mood == "empty":
             full = min(w["resets_at"] for w in live if float(w.get("used_percentage") or 0) >= 100)
-            text += (" · vuelve en " if full - now < 86400 else " · vuelve el ") + until(full)
+            text += (" · vuelvo en " if full - now < 86400 else " · vuelvo el ") + until(full)
         self.mood_lbl.set_text(text)
 
     # ---------- datos ----------

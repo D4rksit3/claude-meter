@@ -2,7 +2,7 @@
 
 ![Medidor con la sesión al 67 % y la semana al 31 %](docs/captura.png)
 
-Widget pequeño para Linux que se queda **siempre encima** de las demás ventanas y muestra cuánto llevas usado de tu plan de Claude:
+Widget pequeño para Linux que se queda **siempre encima** de las demás ventanas. En reposo solo se ve el muñequito, sin fondo, con un globito que dice cómo está ("¡Estoy feliz!"); **al pasar el mouse** aparece cuánto llevas usado de tu plan de Claude:
 
 - **Sesión (5 h)** y **Semana**: porcentaje usado, barra (verde → ámbar desde 60 % → rojo desde 85 %) y cuándo se reinicia
 - el **muñequito pixelado de Claude Code**, animado, que cambia de ánimo según el uso: feliz saltando y saludando con poco (< 50 %), tranquila (< 75 %), cansada (< 90 %), triste con lagrimita (< 100 %) y agotada al llegar al límite, con la hora en que vuelve
