@@ -14,6 +14,10 @@ install -Dm755 statusline.py "$HOOK"
 install -Dm755 activity.py "$ACT"
 install -Dm644 claude-meter.svg "$HOME/.local/share/icons/hicolor/scalable/apps/claude-meter.svg"
 mkdir -p "$APPS"
+# extensión opcional de GNOME: le dice al muñeco qué tipo de programa usas (no la activa sola)
+EXT="$HOME/.local/share/gnome-shell/extensions/claude-meter@d4rksit3"
+install -Dm644 gnome-extension/metadata.json "$EXT/metadata.json"
+install -Dm644 gnome-extension/extension.js "$EXT/extension.js"
 sed "s|@BIN@|$BIN|" claude-meter.desktop > "$APPS/claude-meter.desktop"
 
 if [[ "${1:-}" == "--autostart" ]]; then
@@ -59,3 +63,5 @@ with open(path, "w") as f:
 PY
 
 echo "Listo. Búscalo como \"Claude meter\" en el menú de aplicaciones."
+echo "Opcional: para que comente qué programa usas, cierra y abre sesión y activa"
+echo "\"Claude meter: programa enfocado\" en la app Extensiones (o: gnome-extensions enable claude-meter@d4rksit3)."

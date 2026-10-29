@@ -7,7 +7,8 @@ Widget pequeño para Linux que se queda **siempre encima** de las demás ventana
 - **Sesión (5 h)** y **Semana**: porcentaje usado, barra (verde → ámbar desde 60 % → rojo desde 85 %) y cuándo se reinicia
 - el **muñequito pixelado de Claude Code**, animado, que cambia de ánimo según el uso: feliz saltando y saludando con poco (< 50 %), tranquila (< 75 %), cansada (< 90 %), triste con lagrimita (< 100 %) y agotada al llegar al límite, con la hora en que vuelve
 - **mientras Claude trabaja** el muñeco teclea ("Trabajando…") y **cuando te pregunta algo o pide permiso** se rasca la cabeza con un signo de pregunta ("Tengo una duda…")
-- **si no lo usas por 15 min**, el muñeco intenta conversar cada pocos minutos saludando con el bracito: frases de **motivación** ("Paso a paso se llega lejos", "Hecho es mejor que perfecto"), de **cuidado** ("¿Tomaste agua? 💧", "Estira la espalda un ratito") y según el contexto ("¡Buenos días! ¿Empezamos?", "Te queda 80% de esta sesión, ¡aprovechémoslo!"); se apaga con clic derecho → *Que me hable cuando no lo uso*
+- **comenta lo que haces**, como si te viera: cuando cambias de programa ("¡A programar! 💻", "Modo hacker activado 😎"), cuando cambia la canción en Spotify ("🎵 Buen tema: …"), cuando te vas ("Zzz… te espero", se duerme) y cuando vuelves ("¡Volviste! 👋"); si llevas 50 min seguidos te sugiere una pausa, y avisa al cruzar 50/75/90 % de la sesión
+- además, cada 2,5–5 min suelta una frase de **motivación** ("Paso a paso se llega lejos", "Hecho es mejor que perfecto"), de **cuidado** ("¿Tomaste agua? 💧") o una **pregunta** ("¿Cuál es la meta de hoy?"); se apaga con clic derecho → *Que me hable cuando no lo uso*
 - **cuando Claude termina una tarea** te felicita ("¡Listo! Buen trabajo 💪", "¡Misión cumplida!")
 - **un clic** sobre el muñeco y reacciona ("¡Ey!", "¡Jaja, cosquillas!")
 - modelo en uso y hace cuánto fue el último uso de Claude Code (se pone ámbar pasada 1 hora)
@@ -35,6 +36,17 @@ Cuando una ventana pasa su hora de reinicio, el widget la muestra en 0 %.
 tu respuesta (`AskUserQuestion`, `ExitPlanMode`, pedidos de permiso) o libre, en `~/.cache/claude-meter-activity.json`.
 No imprime nada ni bloquea. Si hay varias sesiones, una pregunta pendiente en cualquiera gana.
 Igual que la status line, acepta `CLAUDE_METER_ACTIVITY` y `CLAUDE_METER_OWNER`.
+
+### Qué "ve" el muñeco
+
+Todo es local y nada sale de tu equipo:
+
+- **Si estás o te fuiste:** segundos sin teclado ni mouse, que da GNOME (`org.gnome.Mutter.IdleMonitor`).
+- **Qué suena:** Spotify por MPRIS.
+- **Qué programa usas (opcional):** en Wayland ninguna app puede saberlo por su cuenta, así que el repo trae una
+  extensión mínima de GNOME (`gnome-extension/`) que solo entrega la *clase* de la ventana enfocada (`code`,
+  `firefox`…), nunca títulos ni contenido. El instalador la copia pero **no la activa**: cierra y abre sesión y
+  actívala en la app *Extensiones*. Sin ella, todo lo demás funciona igual.
 
 ## Requisitos
 

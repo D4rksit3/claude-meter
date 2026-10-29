@@ -1,0 +1,7 @@
+{
+  "uuid": "claude-meter@d4rksit3",
+  "name": "Claude meter: programa enfocado",
+  "description": "Le dice al widget Claude meter qué tipo de programa tienes enfocado (solo la clase de la ventana, nunca títulos ni contenido) para que el muñeco comente lo que haces.",
+  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "url": "https://github.com/D4rksit3/claude-meter"
+}

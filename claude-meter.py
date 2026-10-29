@@ -23,7 +23,7 @@ import gi
 gi.require_version("Gtk", "3.0")
 gi.require_version("Gdk", "3.0")
 gi.require_version("GdkPixbuf", "2.0")
-from gi.repository import Gdk, GdkPixbuf, GLib, Gtk  # noqa: E402
+from gi.repository import Gdk, GdkPixbuf, Gio, GLib, Gtk  # noqa: E402
 
 DATA = os.path.expanduser("~/.cache/claude-meter.json")
 ACTIVITY = os.path.expanduser("~/.cache/claude-meter-activity.json")  # lo escribe activity.py (hooks)
@@ -31,10 +31,48 @@ WORK_STALE = 10 * 60    # "trabajando" sin eventos nuevos por más de esto: prob
 ASK_STALE = 2 * 3600    # una pregunta sin responder deja de mostrarse pasado esto
 ACTIVITY_TEXT = {"work": "Trabajando…", "ask": "Tengo una duda…"}
 
-# cuando no se usa Claude por un rato, el muñeco intenta conversar (se puede apagar con clic derecho)
-IDLE_AFTER = 15 * 60          # minutos sin uso antes de empezar a hablar
-CHAT_EVERY = (90, 240)        # segundos entre un mensaje y otro (al azar en ese rango)
-CHAT_SHOW = 9                 # segundos que se ve cada mensaje
+# el muñeco "ve" lo que haces y comenta (se puede apagar con clic derecho)
+CHAT_EVERY = (150, 300)       # charla espontánea mientras estás: cada 2,5–5 min (al azar)
+CHAT_SHOW = 12                # segundos que se ve cada mensaje
+MIN_GAP = 25                  # nunca dos mensajes seguidos con menos de esto (salvo toque y festejo)
+AWAY_AFTER = 5 * 60           # sin teclado ni mouse por esto: te fuiste
+STREAK_BREAK = 50 * 60        # tiempo seguido frente a la pantalla antes de sugerir una pausa
+CLAUDE_LONG = 3 * 60          # si Claude lleva esto trabajando, lo comenta
+CLAUDE_UNUSED = 15 * 60       # sin usar Claude por esto: puede invitarte a usarlo
+EXT_BUS = ("org.gnome.Shell", "/pe/d4rksit3/ClaudeMeter", "pe.d4rksit3.ClaudeMeter")  # gnome-extension/
+
+# tipo de programa según la clase de su ventana (nunca se leen títulos)
+APP_KINDS = [
+    ("code", ("code", "vscodium", "jetbrains", "pycharm", "idea", "sublime", "text-editor", "gedit", "zed")),
+    ("terminal", ("terminal", "ptyxis", "kitty", "alacritty", "konsole", "tilix", "wezterm", "ghostty")),
+    ("meet", ("zoom", "meet", "webex")),
+    ("chat", ("slack", "discord", "telegram", "whatsapp", "teams", "signal", "thunderbird", "evolution", "geary")),
+    ("browser", ("firefox", "chrome", "chromium", "brave", "edge", "epiphany", "vivaldi", "opera")),
+    ("music", ("spotify", "rhythmbox")),
+    ("notes", ("obsidian",)),
+    ("office", ("libreoffice", "soffice", "onlyoffice", "wps")),
+    ("files", ("nautilus", "files")),
+]
+APP_LINES = {
+    "code": ["¡A programar! 💻", "Ese código te va a quedar bonito", "¿Y los tests? Yo no digo nada 👀",
+             "Nombres claros, futuro tú feliz", "Commit chiquito, commit feliz"],
+    "terminal": ["Modo hacker activado 😎", "Ojo con ese sudo 👀", "La terminal es tu casa", "Cuidado con el rm -rf 😅"],
+    "browser": ["¿Investigando algo? 🔎", "No te pierdas en las pestañas 😅", "¿Documentación o redes? 👀"],
+    "music": ["¿Qué ponemos? 🎵", "¡Música para concentrarse!"],
+    "chat": ["¡Saluda de mi parte! 👋", "Responde y volvemos a lo nuestro 😉"],
+    "meet": ["¡Suerte en la reunión! 🎤", "Cámara lista, sonrisa lista 😄"],
+    "notes": ["Anotar es pensar dos veces 📝", "Tu segundo cerebro crece 🧠"],
+    "office": ["Documentos… ¡ánimo! 📄", "Ese informe va a quedar 👌"],
+    "files": ["Ordenando cositas 📁"],
+}
+QUESTION_LINES = [
+    "¿Cuál es la meta de hoy?",
+    "¿Qué es lo más importante ahora?",
+    "¿Ya tachaste algo de tu lista?",
+    "¿En qué te ayudo? Claude está libre",
+]
+BACK_LINES = ["¡Volviste! 👋", "¡Hola de nuevo! ¿Seguimos?", "Te extrañé 😄"]
+SONG_LINES = ["🎵 Buen tema: {}", "¡Esa me gusta! 🎶", "🎶 {}, buena elección"]
 IDLE_LINES = [
     "¿Hacemos algo?",
     "Psst… ¿seguimos?",
@@ -226,6 +264,11 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
             'shape-rendering="crispEdges">{4}</svg>').format(px, round(px * vb[1] / 56), vb[0], vb[1], "".join(parts))
 
 
+def span(seconds):
+    mins = int(seconds // 60)
+    return "{} h {:02d} min".format(mins // 60, mins % 60) if mins >= 60 else "{} min".format(mins)
+
+
 def ago(epoch):
     mins = int((time.time() - epoch) // 60)
     if mins < 1:
@@ -249,7 +292,22 @@ class Meter(Gtk.Window):
         self.last_seen = 0      # último momento en que se usó Claude Code
         self.chat_text = None   # mensaje espontáneo o reacción a un clic
         self.chat_until = 0
-        self.next_chat = time.time() + random.randint(*CHAT_EVERY)
+        self.last_said = 0
+        self.next_chat = time.time() + random.randint(30, 90)
+        # lo que el muñeco "ve"
+        self.bus = Gio.bus_get_sync(Gio.BusType.SESSION, None)
+        self.ticks = 0
+        self.away = False
+        self.away_since = 0
+        self.streak_start = time.time()
+        self.last_break_tip = 0
+        self.app_kind = None
+        self.kind_said = {}
+        self.ext_retry = 0      # la extensión de GNOME es opcional: si no está, se reintenta cada minuto
+        self.song = None
+        self.work_since = 0
+        self.long_said = False
+        self.prev_used = None
         self.press = None       # clic izquierdo pendiente: arrastre o "toque"
         self.dragging = False
         self.drag_end_id = 0
@@ -484,7 +542,7 @@ class Meter(Gtk.Window):
     def _on_release(self, widget, event):
         if event.button == 1 and self.press:
             self.press = None
-            self._say(random.choice(POKE_LINES), 3)
+            self._say(random.choice(POKE_LINES), 3, force=True)
         return False
 
     def _toggle_chatty(self, item):
@@ -495,39 +553,128 @@ class Meter(Gtk.Window):
         self._save_pos()
 
     # ---------- conversación ----------
-    def _say(self, text, seconds):
-        self.chat_text = text
-        self.chat_until = time.time() + seconds
-        self._update_bubble()
-
-    def _idle_line(self):
+    def _say(self, text, seconds=CHAT_SHOW, force=False):
         now = time.time()
+        if not force and (now - self.last_said < MIN_GAP or not self.config.get("chatty", True)):
+            return False
+        self.chat_text = text
+        self.chat_until = now + seconds
+        self.last_said = now
+        self.next_chat = max(self.next_chat, now + random.randint(*CHAT_EVERY))
+        self._update_bubble()
+        return True
+
+    def _dbus(self, name, path, iface, method, args=None):
+        return self.bus.call_sync(name, path, iface, method, args, None,
+                                  Gio.DBusCallFlags.NONE, 500, None).unpack()
+
+    def _idle_seconds(self):
+        try:
+            return self._dbus("org.gnome.Mutter.IdleMonitor", "/org/gnome/Mutter/IdleMonitor/Core",
+                              "org.gnome.Mutter.IdleMonitor", "GetIdletime")[0] / 1000
+        except GLib.Error:
+            return 0
+
+    def _focused_kind(self, now):
+        if now < self.ext_retry:
+            return None
+        try:
+            app = self._dbus(*EXT_BUS, "FocusedApp")[0].lower()
+        except GLib.Error:
+            self.ext_retry = now + 60
+            return None
+        return next((kind for kind, keys in APP_KINDS if any(k in app for k in keys)), None)
+
+    def _spotify(self):
+        try:
+            props = self._dbus("org.mpris.MediaPlayer2.spotify", "/org/mpris/MediaPlayer2",
+                               "org.freedesktop.DBus.Properties", "GetAll",
+                               GLib.Variant("(s)", ("org.mpris.MediaPlayer2.Player",)))[0]
+        except GLib.Error:
+            return None, False
+        return (props.get("Metadata") or {}).get("xesam:title"), props.get("PlaybackStatus") == "Playing"
+
+    def _idle_line(self, now):
+        """Charla espontánea: motivación, cuidado, preguntas y lo que se sabe del contexto."""
         hour = time.localtime().tm_hour
-        # mezcla: charla, motivación y cuidado personal (la motivación pesa más)
-        lines = IDLE_LINES + MOTIVATION_LINES * 2 + CARE_LINES
+        lines = MOTIVATION_LINES * 2 + CARE_LINES + QUESTION_LINES
+        if now - self.last_seen > CLAUDE_UNUSED:
+            lines += IDLE_LINES
+        if self.app_kind:  # lo que estás usando ahora pesa bastante
+            lines += APP_LINES[self.app_kind] * 3
         if 6 <= hour < 12:
             lines.append("¡Buenos días! ¿Empezamos?")
+        elif 12 <= hour < 15:
+            lines.append("¿Ya almorzaste? 🍽️")
         elif hour >= 22 or hour < 5:
             lines.append("Ya es tarde… ¿descansamos?")
-        if now - self.last_seen > 2 * 3600:
-            lines.append("Te extraño…")
         five = (self.data or {}).get("five_hour")
         if five and five.get("resets_at", 0) > now and five.get("used_percentage", 0) < 50:
             lines.append("Te queda {:.0f}% de esta sesión, ¡aprovechémoslo!".format(100 - five["used_percentage"]))
         return random.choice(lines)
 
-    def _tick_chat(self, now):
-        if self.activity:  # trabajando o preguntando: nada de charla
-            self.chat_until = 0
-            return
+    def _brain(self, now):
+        """Cada segundo: mira si estás, qué usas, qué suena y qué hace Claude, y decide si comentar."""
+        self.ticks += 1
         if self.chat_text and now >= self.chat_until:
             self.chat_text = None
             self._update_bubble()
-        idle = now - self.last_seen
-        if (self.config.get("chatty", True) and self.last_seen and idle >= IDLE_AFTER
-                and now >= self.next_chat and now >= self.chat_until):
-            self._say(self._idle_line(), CHAT_SHOW)
-            self.next_chat = now + random.randint(*CHAT_EVERY)
+
+        # ¿estás frente a la pantalla? (cada 2 s)
+        if self.ticks % 2 == 0:
+            idle = self._idle_seconds()
+            if idle >= AWAY_AFTER and not self.away:
+                self.away = True
+                self.away_since = now - idle
+                self._update_bubble()
+            elif idle < AWAY_AFTER and self.away:
+                self.away = False
+                gone = now - self.away_since
+                self.streak_start = now
+                self._update_bubble()
+                self._say(random.choice(BACK_LINES) if gone < 3600 else
+                          "¡Volviste! Estuviste fuera {}".format(span(gone)), force=True)
+            if (not self.away and now - self.streak_start >= STREAK_BREAK
+                    and now - self.last_break_tip >= STREAK_BREAK):
+                if self._say("Llevas {} seguido, ¿una pausa? ☕".format(span(now - self.streak_start)), 15):
+                    self.last_break_tip = now
+        if self.away:
+            return
+
+        # ¿qué programa usas? (cada 3 s; solo con la extensión de GNOME)
+        if self.ticks % 3 == 0:
+            kind = self._focused_kind(now)
+            if kind != self.app_kind:
+                self.app_kind = kind
+                if kind and now - self.kind_said.get(kind, 0) > 600:
+                    if self._say(random.choice(APP_LINES[kind])):
+                        self.kind_said[kind] = now
+
+        # ¿qué suena? (cada 5 s)
+        if self.ticks % 5 == 0:
+            title, playing = self._spotify()
+            if playing and title and title != self.song:
+                if self.song is not None and random.random() < 0.5:
+                    self._say(random.choice(SONG_LINES).format(title))
+                self.song = title
+
+        # Claude lleva rato trabajando
+        if self.activity == "work" and not self.long_said and now - self.work_since > CLAUDE_LONG:
+            self.long_said = self._say("Claude sigue en eso… ¿un café mientras? ☕")
+
+        if now >= self.next_chat:
+            if not self._say(self._idle_line(now)):
+                self.next_chat = now + MIN_GAP
+
+    def _check_usage(self, data):
+        """Avisa al cruzar 50, 75 y 90 % de la sesión de 5 h."""
+        five = (data or {}).get("five_hour") or {}
+        used = five.get("used_percentage", 0) if five.get("resets_at", 0) > time.time() else 0
+        if self.prev_used is not None:
+            for mark in (50, 75, 90):
+                if self.prev_used < mark <= used:
+                    self._say("¡Ojo! Ya vas en {:.0f}% de la sesión".format(used), 15, force=True)
+        self.prev_used = used
 
     # ---------- mascota ----------
     def _frame(self, mood, i):
@@ -545,7 +692,8 @@ class Meter(Gtk.Window):
             n = int(LOOP * 1000 / FRAME_MS)
             i = int((time.time() - self.t0) * 1000 / FRAME_MS) % n
             chatting = time.time() < self.chat_until
-            self.mascot.set_from_pixbuf(self._frame(self.activity or ("wave" if chatting else self.mood), i))
+            idle_look = "wave" if chatting else "sleep" if self.away else self.mood
+            self.mascot.set_from_pixbuf(self._frame(self.activity or idle_look, i))
         return True
 
     def _poll_activity(self):
@@ -561,16 +709,24 @@ class Meter(Gtk.Window):
             self.last_seen = now
         if activity != self.activity:
             finished = self.activity == "work" and activity is None
+            if activity == "work" and self.activity != "work":
+                self.work_since = now
+                self.long_said = False
             self.activity = activity
             if finished:  # Claude terminó una tarea: festejo corto
-                self._say(random.choice(DONE_LINES), 5)
+                self._say(random.choice(DONE_LINES), 6, force=True)
             self._update_bubble()
-        self._tick_chat(now)
+        self._brain(now)
         return True
 
     def _update_bubble(self):
         chat = self.chat_text if time.time() < self.chat_until else None
-        self.mood_lbl.set_text(ACTIVITY_TEXT.get(self.activity) or chat or self.mood_text)
+        # una pregunta de Claude manda; luego lo que el muñeco dice; luego qué hace
+        if self.activity == "ask":
+            text = ACTIVITY_TEXT["ask"]
+        else:
+            text = chat or ACTIVITY_TEXT.get(self.activity) or ("Zzz… te espero" if self.away else self.mood_text)
+        self.mood_lbl.set_text(text)
 
     def _set_mood(self, data):
         if not data:
@@ -629,6 +785,7 @@ class Meter(Gtk.Window):
         self._set_limit(self.week, data.get("seven_day"))
         self.data = data
         self._set_mood(data)
+        self._check_usage(data)
         updated = data.get("updated_at", 0)
         ctx = self.foot.get_style_context()
         if time.time() - updated > STALE_AFTER:
