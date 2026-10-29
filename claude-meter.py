@@ -80,7 +80,7 @@ def until(epoch):
     return "{}h {:02d}m".format(h, m) if h else "{} min".format(m)
 
 
-def mascot_svg(mood, t, px=MASCOT):
+def mascot_svg(mood, t, px=MASCOT, crop=True):
     """Un cuadro del muñequito pixelado de Claude Code, en una caja de 56x56.
 
     Rejilla de 18x5 celdas: cuerpo, dos ojitos, bracitos a los lados y cuatro patitas.
@@ -146,8 +146,10 @@ def mascot_svg(mood, t, px=MASCOT):
                          'font-size="{:.1f}" fill="#a7a7a7" opacity="{:.2f}">z</text>'.format(
                              42 + ph * 6, max(8, y0 - 1 - ph * 8), 6 + ph * 4, 1 - ph))
 
-    return ('<svg xmlns="http://www.w3.org/2000/svg" width="{0}" height="{0}" viewBox="0 0 56 56" '
-            'shape-rendering="crispEdges">{1}</svg>').format(px, "".join(parts))
+    # recortado: sin el aire de arriba/abajo, para poder pegarlo a los bordes de la pantalla
+    vb = (6, 44) if crop else (0, 56)
+    return ('<svg xmlns="http://www.w3.org/2000/svg" width="{0}" height="{1}" viewBox="0 {2} 56 {3}" '
+            'shape-rendering="crispEdges">{4}</svg>').format(px, round(px * vb[1] / 56), vb[0], vb[1], "".join(parts))
 
 
 def ago(epoch):
@@ -165,7 +167,7 @@ class Meter(Gtk.Window):
         self.config = load_json(CONF, {})
         self.save_pos_id = 0
         self.mood = "sleep"
-        self.shift = 0
+        self.shift = None  # (dx, dy) mientras la ventana está corrida para mostrar el detalle
         self.hide_id = 0
         self.t0 = time.time()
         self.frames = {}  # ánimo -> lista de pixbufs del ciclo
@@ -247,20 +249,24 @@ class Meter(Gtk.Window):
         root.connect("leave-notify-event", self._on_leave)
         self.add(root)
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        # detalle a la izquierda y muñeco a la derecha, ambos pegados abajo
+        outer = Gtk.Box(spacing=6)
         root.add(outer)
+        buddy = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        buddy.set_valign(Gtk.Align.END)
 
         # en reposo: globito con el ánimo y el muñeco, sin fondo
         self.mood_lbl = self._label("bubble")
-        self.mood_lbl.set_halign(Gtk.Align.START)
+        self.mood_lbl.set_halign(Gtk.Align.END)
         self.mascot = Gtk.Image()
-        self.mascot.set_size_request(MASCOT, MASCOT)
-        self.mascot.set_halign(Gtk.Align.START)
-        outer.pack_start(self.mood_lbl, False, False, 0)
-        outer.pack_start(self.mascot, False, False, 0)
+        self.mascot.set_size_request(MASCOT, round(MASCOT * 44 / 56))
+        self.mascot.set_halign(Gtk.Align.END)
+        buddy.pack_start(self.mood_lbl, False, False, 0)
+        buddy.pack_start(self.mascot, False, False, 0)
 
         # al pasar el mouse: tarjeta con los porcentajes
         self.details = Gtk.EventBox()
+        self.details.set_valign(Gtk.Align.END)
         self.details.get_style_context().add_class("card")
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         box.set_size_request(210, -1)
@@ -284,6 +290,7 @@ class Meter(Gtk.Window):
         self.foot = self._label("foot")
         box.pack_start(self.foot, False, False, 2)
         outer.pack_start(self.details, False, False, 0)
+        outer.pack_start(buddy, False, False, 0)
 
         self.show_all()
         self.details.set_no_show_all(True)
@@ -295,8 +302,7 @@ class Meter(Gtk.Window):
             GLib.source_remove(self.hide_id)
             self.hide_id = 0
         if not self.details.get_visible():
-            self.details.show()
-            GLib.idle_add(self._fit_on_screen)
+            self._show_details()
         return False
 
     def _on_leave(self, widget, event):
@@ -305,26 +311,25 @@ class Meter(Gtk.Window):
             self.hide_id = GLib.timeout_add(250, self._hide_details)
         return False
 
+    def _show_details(self):
+        """Abre el detalle hacia la izquierda y arriba, dejando el muñeco exactamente donde está."""
+        x, y = self.get_position()
+        w0, h0 = self.get_size()
+        self.details.show()
+        nat = self.get_preferred_size()[1]  # el tamaño nuevo aún no se aplicó
+        dx, dy = nat.width - w0, max(0, nat.height - h0)
+        self.shift = (dx, dy)
+        self.move(x - dx, y - dy)
+
     def _hide_details(self):
         self.hide_id = 0
         self.details.hide()
         self.resize(1, 1)
         if self.shift:
             x, y = self.get_position()
-            self.move(x, y + self.shift)
-            self.shift = 0
-        return False
-
-    def _fit_on_screen(self):
-        """Si el detalle se sale por abajo, sube la ventana mientras se muestra."""
-        mon = Gdk.Display.get_default().get_monitor_at_window(self.get_window())
-        area = mon.get_workarea()
-        x, y = self.get_position()
-        h = self.get_preferred_size()[1].height  # el tamaño real aún no se aplicó
-        over = y + h - (area.y + area.height)
-        if over > 0:
-            self.shift = over
-            self.move(x, y - over)
+            dx, dy = self.shift
+            self.shift = None
+            self.move(x + dx, y + dy)
         return False
 
     def _on_press(self, widget, event):
