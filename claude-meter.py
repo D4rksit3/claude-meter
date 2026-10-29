@@ -29,11 +29,11 @@ DATA = os.path.expanduser("~/.cache/claude-meter.json")
 ACTIVITY = os.path.expanduser("~/.cache/claude-meter-activity.json")  # lo escribe activity.py (hooks)
 WORK_STALE = 10 * 60    # "trabajando" sin eventos nuevos por más de esto: probablemente se cortó
 ASK_STALE = 2 * 3600    # una pregunta sin responder deja de mostrarse pasado esto
-ACTIVITY_TEXT = {"work": "Trabajando…", "ask": "Tengo una duda…"}
+ACTIVITY_TEXT = {"ask": "Tengo una duda…"}  # trabajando ya se ve: teclea
 
 # el muñeco "ve" lo que haces y comenta (se puede apagar con clic derecho)
 CHAT_EVERY = (150, 300)       # charla espontánea mientras estás: cada 2,5–5 min (al azar)
-CHAT_SHOW = 12                # segundos que se ve cada mensaje
+CHAT_SHOW = 30                # segundos que se ve cada mensaje (se pausa con el mouse encima)
 MIN_GAP = 25                  # nunca dos mensajes seguidos con menos de esto (salvo toque y festejo)
 AWAY_AFTER = 5 * 60           # sin teclado ni mouse por esto: te fuiste
 STREAK_BREAK = 50 * 60        # tiempo seguido frente a la pantalla antes de sugerir una pausa
@@ -119,19 +119,16 @@ FRAME_MS = 80
 LOOP = 6.6  # segundos; todo movimiento de la mascota se repite en este ciclo y así se dibuja una sola vez
 
 # ánimo según el mayor de los dos porcentajes: (hasta %, ánimo)
-MOODS = [(50, "happy"), (75, "ok"), (90, "tired"), (100, "sad")]
+MOODS = [(20, "great"), (40, "happy"), (60, "ok"), (75, "meh"), (90, "tired"), (100, "sad")]
 # carita del globito según el consumo (el mayor de sesión y semana): (hasta %, carita)
-FACES = [(20, "😄"), (40, "😊"), (60, "🙂"), (75, "😐"), (90, "😓"), (100, "😫")]
-FACE_EMPTY = "😵"
-FACE_SLEEP = "😴"
 
 CSS = b"""
 window { background-color: transparent; }
 .card { background-color: rgba(22, 22, 22, 0.95); border-radius: 12px; }
 .head { color: #d97757; font-weight: bold; }
-.bubble { color: #ffffff; font-size: 9pt; font-weight: bold; background-color: rgba(22, 22, 22, 0.85);
-          border-radius: 9px; padding: 2px 8px; }
-.bubble.face { font-size: 14pt; padding: 0 5px; }
+.bubble { color: #ffffff; font-size: 11pt; font-weight: bold; background-color: rgba(28, 28, 28, 0.97);
+          border: 2px solid #d97757; border-radius: 10px; padding: 5px 10px; }
+.lastmsg { color: #e8e8e8; font-size: 9pt; }
 .model { color: #a7a7a7; font-size: 9pt; }
 .name { color: #ffffff; font-size: 9pt; }
 .pct { color: #ffffff; font-weight: bold; font-size: 9pt; }
@@ -161,39 +158,61 @@ def until(epoch):
     return "{}h {:02d}m".format(h, m) if h else "{} min".format(m)
 
 
+# cara de cada ánimo: ojos, boca, cejas y extras (como un emoji, pero en el muñeco)
+FACE = {
+    "great": dict(eyes="arc", mouth="grin", blush=True),            # 😄
+    "happy": dict(eyes="round", mouth="smile", blush=True),         # 😊
+    "ok":    dict(eyes="round", mouth="small"),                     # 🙂
+    "meh":   dict(eyes="round", mouth="flat"),                      # 😐
+    "tired": dict(eyes="half", mouth="wavy", sweat=True),           # 😓
+    "sad":   dict(eyes="round", mouth="frown", brows="sad", tear=True),  # 😫
+    "empty": dict(eyes="x", mouth="wavy"),                          # 😵
+    "sleep": dict(eyes="closed", mouth="o"),                        # 😴
+    "work":  dict(eyes="down", mouth="small"),                      # concentrado
+    "ask":   dict(eyes="up", mouth="o", brows="raised"),            # pensando
+    "wave":  dict(eyes="arc", mouth="talk", blush=True),            # hablando
+}
+COLORS = {"great": "#ef7d52", "happy": "#e8774f", "ok": "#d97757", "meh": "#d08062", "tired": "#c98463",
+          "sad": "#b58c79", "empty": "#978a84", "sleep": "#b58c79"}
+
+
 def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
     """Un cuadro del muñequito pixelado de Claude Code, en una caja de 56x56.
 
-    Rejilla de 18x5 celdas: cuerpo, dos ojitos, bracitos a los lados y cuatro patitas.
-    mood "work" (teclea) y "ask" (tiene una duda) toman el color del ánimo de uso que indica tint.
+    Rejilla de 18x5 celdas: cuerpo, dos ojitos, bracitos a los lados y cuatro patitas, más una cara
+    (cejas, boca, rubor, sudor, lágrima) que cambia con el ánimo.
+    mood "work" (teclea), "ask" (duda) y "wave" (habla) toman el color del ánimo de uso que indica tint.
     """
     ux, uy = 3, 6               # cada pixel es el doble de alto que de ancho, como las celdas de la terminal
     w = 2 * math.pi / LOOP      # frecuencias enteras de w: el ciclo cierra sin saltos
-    lively = mood in ("happy", "wave")
-    hop = -abs(math.sin(w * 3 * t)) * 5 if lively else 0
-    sway = round(math.sin(w * 2 * t)) * 0.5 if mood == "ok" else 0
+    lively = mood in ("great", "happy", "wave")
+    droopy = mood in ("tired", "sad", "empty")
+    hop = -abs(math.sin(w * 3 * t)) * (5 if mood != "happy" else 3) if lively else 0
+    sway = round(math.sin(w * 2 * t)) * 0.5 if mood in ("ok", "meh") else 0
     sink = {"tired": 2, "sad": 3, "empty": 5, "sleep": 3}.get(mood, 0)
-    breathe = math.sin(w * t * (1 if mood in ("sad", "empty", "sleep") else 2)) * 0.4
+    breathe = math.sin(w * t * (1 if droopy or mood == "sleep" else 2)) * 0.4
     x0 = 1 + sway * ux
     y0 = 14 + hop + sink
-    # se apaga el color a medida que se cansa
-    colors = {"happy": "#e8774f", "ok": "#d97757", "tired": "#c98463", "sad": "#b58c79",
-              "empty": "#978a84", "sleep": "#b58c79"}
-    color = colors.get(mood) or colors.get(tint, colors["ok"])
+    color = COLORS.get(mood) or COLORS.get(tint, COLORS["ok"])
     tap = math.sin(w * 22 * t) > 0  # alterna manos al teclear
     if mood == "work":
         y0 += 0.5 if tap else 0
-    hole = "#161616"
+    ink = "#161616"
+    face = FACE[mood]
 
     def px_rect(cx, cy, cw=1, ch=1, fill=None, extra=""):
         return '<rect x="{:.2f}" y="{:.2f}" width="{:.2f}" height="{:.2f}" fill="{}"{}/>'.format(
             x0 + cx * ux, y0 + cy * uy, cw * ux, ch * uy, fill or color, extra)
 
+    def stroke(d, width=1.2, fill="none"):
+        return ('<path d="{}" stroke="{}" stroke-width="{}" stroke-linecap="round" stroke-linejoin="round" '
+                'fill="{}" shape-rendering="geometricPrecision"/>').format(d, ink, width, fill)
+
     parts = [
         px_rect(3, 0 - breathe / uy, 12, 2 + breathe / uy),  # cabeza (respira estirándose un poco)
         px_rect(3, 2, 12, 2),                               # cuerpo
     ]
-    # bracitos: arriba saludando si está feliz, abajo si está decaído
+    # bracitos: arriba saludando si está contento, abajo si está decaído
     if lively:
         up = math.sin(w * (12 if mood == "wave" else 6) * t) > 0
         parts += [px_rect(1, 1 if up else 2, 2), px_rect(15, 2 if up else 1, 2)]
@@ -201,42 +220,85 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
         parts += [px_rect(1.5, 2.7 if tap else 3.1, 1.5), px_rect(15, 3.1 if tap else 2.7, 1.5)]
     elif mood == "ask":    # una mano rascándose la cabeza
         scratch = math.sin(w * 8 * t) * 0.12
-        parts += [px_rect(1, 2, 2),
-                  px_rect(16, 0.9, 1, 1.6),                       # brazo hacia arriba
-                  px_rect(14.6, 0.35 + scratch, 2.4, 0.55)]       # mano sobre la cabeza
-    elif mood in ("sad", "empty", "tired"):
+        parts += [px_rect(1, 2, 2), px_rect(16, 0.9, 1, 1.6), px_rect(14.6, 0.35 + scratch, 2.4, 0.55)]
+    elif droopy:
         parts += [px_rect(1.5, 3, 1.5), px_rect(15, 3, 1.5)]
     else:
         parts += [px_rect(1, 2, 2), px_rect(15, 2, 2)]
-    # patitas: caminan cuando está feliz, quietas si no
+    # patitas: caminan cuando está contento, quietas si no
     step = lively and math.sin(w * 6 * t) > 0
     for i, cx in enumerate((4, 6, 11, 13)):
         lift = 0.3 if step and i % 2 == 0 else 0
         parts.append(px_rect(cx, 4 - lift, 1, 1))
 
-    # ojos: huecos en la cabeza
+    # ---- cara ----
+    cx = x0 + 9 * ux                 # centro horizontal de la cara
+    ey = y0 + 1.3 * uy               # altura de los ojos
+    my = y0 + 2.25 * uy              # altura de la boca
     blink = (t % (LOOP / 2)) < 0.15
+    eyes = "closed" if blink and face["eyes"] in ("round", "half", "down", "up") else face["eyes"]
     for ex in (5, 12):
-        if mood == "sleep" or (blink and mood in ("happy", "wave", "ok", "tired", "work", "ask")):
-            parts.append(px_rect(ex, 1.65, 1, 0.2, hole))
-        elif mood == "tired":
-            parts.append(px_rect(ex, 1.4, 1, 0.6, hole))
-        elif mood == "work":   # mirando el teclado
-            parts.append(px_rect(ex, 1.3, 1, 0.7, hole))
-        elif mood == "ask":    # mirando hacia arriba, pensando
-            parts.append(px_rect(ex + 0.3, 0.45, 1, 0.8, hole))
-        elif mood == "empty":
-            cx, cy = x0 + (ex + 0.5) * ux, y0 + 1.5 * uy
-            parts.append('<path d="M{0:.2f} {1:.2f} l{2} {2} M{3:.2f} {1:.2f} l-{2} {2}" stroke="{4}" '
-                         'stroke-width="1" stroke-linecap="round"/>'.format(cx - 1.6, cy - 1.6, 3.2, cx + 1.6, hole))
-        else:
-            parts.append(px_rect(ex, 1, 1, 1, hole))
-    if lively:  # cachetes
-        parts += [px_rect(3.5, 1.65, 1, 0.3, "#f6b3a6"), px_rect(13.5, 1.65, 1, 0.3, "#f6b3a6")]
-    if mood == "sad":    # lagrimita que cae
+        ecx = x0 + (ex + 0.5) * ux
+        if eyes == "round":
+            parts.append(px_rect(ex, 0.85, 1, 0.9, ink))
+        elif eyes == "arc":          # ^ ^
+            parts.append(stroke("M{:.2f} {:.2f} Q{:.2f} {:.2f} {:.2f} {:.2f}".format(
+                ecx - 2, ey + 1.2, ecx, ey - 2.4, ecx + 2, ey + 1.2), 1.3))
+        elif eyes == "half":         # párpados caídos
+            parts.append(px_rect(ex, 1.2, 1, 0.5, ink))
+            parts.append(stroke("M{:.2f} {:.2f} L{:.2f} {:.2f}".format(ecx - 2.2, ey - 1.2, ecx + 2.2, ey - 1.2), 1))
+        elif eyes == "closed":
+            parts.append(stroke("M{:.2f} {:.2f} Q{:.2f} {:.2f} {:.2f} {:.2f}".format(
+                ecx - 1.8, ey, ecx, ey + 1.4, ecx + 1.8, ey), 1.1))
+        elif eyes == "x":
+            parts.append(stroke("M{0:.2f} {1:.2f} l3.2 3.2 M{2:.2f} {1:.2f} l-3.2 3.2".format(
+                ecx - 1.6, ey - 1.6, ecx + 1.6), 1))
+        elif eyes == "down":         # mirando el teclado
+            parts.append(px_rect(ex, 1.25, 1, 0.55, ink))
+        elif eyes == "up":           # mirando hacia arriba, pensando
+            parts.append(px_rect(ex + 0.3, 0.55, 1, 0.6, ink))
+
+    brows = face.get("brows")
+    if brows == "sad":               # cejas que suben hacia el centro
+        parts.append(stroke("M{:.2f} {:.2f} L{:.2f} {:.2f} M{:.2f} {:.2f} L{:.2f} {:.2f}".format(
+            x0 + 4.6 * ux, y0 + 0.55 * uy, x0 + 6.6 * ux, y0 + 0.25 * uy,
+            x0 + 11.4 * ux, y0 + 0.25 * uy, x0 + 13.4 * ux, y0 + 0.55 * uy), 1))
+    elif brows == "raised":
+        parts.append(stroke("M{:.2f} {:.2f} Q{:.2f} {:.2f} {:.2f} {:.2f}".format(
+            x0 + 11.6 * ux, y0 + 0.3 * uy, x0 + 12.8 * ux, y0 + 0.05 * uy, x0 + 14 * ux, y0 + 0.3 * uy), 1))
+
+    mouth = face["mouth"]
+    if mouth == "talk":              # abre y cierra la boca mientras habla
+        mouth = "grin" if math.sin(w * 30 * t) > 0 else "small"
+    if mouth == "grin":              # sonrisa grande, abierta
+        parts.append(stroke("M{:.2f} {:.2f} Q{:.2f} {:.2f} {:.2f} {:.2f} Z".format(
+            cx - 4, my - 1, cx, my + 4.5, cx + 4, my - 1), 1, ink))
+    elif mouth == "smile":
+        parts.append(stroke("M{:.2f} {:.2f} Q{:.2f} {:.2f} {:.2f} {:.2f}".format(cx - 3.6, my - 0.6, cx, my + 3, cx + 3.6, my - 0.6)))
+    elif mouth == "small":
+        parts.append(stroke("M{:.2f} {:.2f} Q{:.2f} {:.2f} {:.2f} {:.2f}".format(cx - 2.2, my, cx, my + 1.8, cx + 2.2, my)))
+    elif mouth == "flat":
+        parts.append(stroke("M{:.2f} {:.2f} L{:.2f} {:.2f}".format(cx - 2.6, my + 0.6, cx + 2.6, my + 0.6)))
+    elif mouth == "wavy":
+        parts.append(stroke("M{:.2f} {:.2f} q1.3 -1.2 2.6 0 t2.6 0".format(cx - 2.6, my + 0.8), 1.1))
+    elif mouth == "frown":
+        parts.append(stroke("M{:.2f} {:.2f} Q{:.2f} {:.2f} {:.2f} {:.2f}".format(cx - 3.4, my + 2, cx, my - 1, cx + 3.4, my + 2)))
+    elif mouth == "o":
+        parts.append('<ellipse cx="{:.2f}" cy="{:.2f}" rx="1.3" ry="1.5" fill="{}" '
+                     'shape-rendering="geometricPrecision"/>'.format(cx, my + 0.8, ink))
+
+    if face.get("blush"):
+        parts += ['<ellipse cx="{:.2f}" cy="{:.2f}" rx="2" ry="1.1" fill="#f6b3a6" opacity="0.9" '
+                  'shape-rendering="geometricPrecision"/>'.format(x0 + bx * ux, y0 + 2.05 * uy) for bx in (4.2, 13.8)]
+    if face.get("sweat"):            # gotita de sudor en la frente
+        sx, sy = x0 + 14.2 * ux, y0 + 0.3 * uy + (t / LOOP * 2 % 1) * 3
+        parts.append('<path d="M{0:.2f} {1:.2f} q-1.6 2.6 0 3.4 q1.6 -0.8 0 -3.4 Z" fill="#7cc4f0" '
+                     'shape-rendering="geometricPrecision"/>'.format(sx, sy))
+    if face.get("tear"):             # lagrimita que cae
         drop = t / LOOP * 4 % 1
-        parts.append(px_rect(5.2, 2 + drop * 2.5, 0.6, 0.3, "#6db3e8",
-                             ' opacity="{:.2f}"'.format(1 - drop)))
+        parts.append('<ellipse cx="{:.2f}" cy="{:.2f}" rx="0.9" ry="1.3" fill="#6db3e8" opacity="{:.2f}" '
+                     'shape-rendering="geometricPrecision"/>'.format(x0 + 5.5 * ux, ey + 3 + drop * 10, 1 - drop))
+
     if mood == "work":   # teclado delante, tapando las patitas, con teclas que se iluminan
         parts.append(px_rect(2, 3.35, 14, 0.95, "#3a3a3a"))
         lit = {(int(t * 10) * 7) % 22, (int(t * 10) * 13 + 5) % 22}
@@ -283,7 +345,9 @@ class Meter(Gtk.Window):
         self.config = load_json(CONF, {})
         self.save_pos_id = 0
         self.mood = "sleep"
-        self.mood_text = FACE_SLEEP
+        self.mood_text = ""
+        self.last_msg = None    # (texto, cuándo): queda en la tarjeta por si no lo viste
+        self.hovering = False
         self.activity = None  # "work", "ask" o None
         self.data = None
         self.last_seen = 0      # último momento en que se usó Claude Code
@@ -465,10 +529,15 @@ class Meter(Gtk.Window):
         self.week = self._limit_row(box, "Semana")
         self.foot = self._label("foot")
         box.pack_start(self.foot, False, False, 2)
+        self.last_lbl = self._label("lastmsg")
+        self.last_lbl.set_line_wrap(True)
+        self.last_lbl.set_max_width_chars(30)
+        box.pack_start(self.last_lbl, False, False, 2)
         root.show_all()
 
     # ---------- detalle al pasar el mouse ----------
     def _on_enter(self, widget, event):
+        self.hovering = True
         if self.dragging:
             return False
         if self.hide_id:
@@ -481,6 +550,7 @@ class Meter(Gtk.Window):
     def _on_leave(self, widget, event):
         # al entrar a un hijo también llega un "leave": ese no cuenta
         if event.detail != Gdk.NotifyType.INFERIOR and not self.hide_id:
+            self.hovering = False
             self.hide_id = GLib.timeout_add(300, self._hide_details)
         return False
 
@@ -539,7 +609,7 @@ class Meter(Gtk.Window):
     def _on_release(self, widget, event):
         if event.button == 1 and self.press:
             self.press = None
-            self._say(random.choice(POKE_LINES), 3, force=True)
+            self._say(random.choice(POKE_LINES), 5, force=True)
         return False
 
     def _toggle_chatty(self, item):
@@ -557,6 +627,7 @@ class Meter(Gtk.Window):
         self.chat_text = text
         self.chat_until = now + seconds
         self.last_said = now
+        self.last_msg = (text, now)
         self.next_chat = max(self.next_chat, now + random.randint(*CHAT_EVERY))
         self._update_bubble()
         return True
@@ -613,6 +684,8 @@ class Meter(Gtk.Window):
     def _brain(self, now):
         """Cada segundo: mira si estás, qué usas, qué suena y qué hace Claude, y decide si comentar."""
         self.ticks += 1
+        if self.chat_text and self.hovering:  # con el mouse encima no se va: da tiempo a leer
+            self.chat_until = max(self.chat_until, now + 3)
         if self.chat_text and now >= self.chat_until:
             self.chat_text = None
             self._update_bubble()
@@ -711,7 +784,7 @@ class Meter(Gtk.Window):
                 self.long_said = False
             self.activity = activity
             if finished:  # Claude terminó una tarea: festejo corto
-                self._say(random.choice(DONE_LINES), 6, force=True)
+                self._say(random.choice(DONE_LINES), 12, force=True)
             self._update_bubble()
         self._brain(now)
         return True
@@ -719,19 +792,20 @@ class Meter(Gtk.Window):
     def _update_bubble(self):
         chat = self.chat_text if time.time() < self.chat_until else None
         # una pregunta de Claude manda; luego lo que el muñeco dice; luego qué hace
+        # el ánimo ya se ve en la cara del muñeco: el globito solo aparece cuando hay algo que decir
         if self.activity == "ask":
             text = ACTIVITY_TEXT["ask"]
         else:
-            text = chat or ACTIVITY_TEXT.get(self.activity) or (FACE_SLEEP if self.away else self.mood_text)
+            text = chat or ("" if self.away else self.mood_text)
         self.mood_lbl.set_text(text)
-        # solo carita: más grande
-        ctx = self.mood_lbl.get_style_context()
-        ctx.add_class("face") if len(text) <= 2 else ctx.remove_class("face")
+        self.mood_lbl.set_visible(bool(text))
+        if self.last_msg:
+            self.last_lbl.set_text("💬 {} · {}".format(self.last_msg[0], ago(self.last_msg[1])))
 
     def _set_mood(self, data):
         if not data:
             self.mood = "sleep"
-            self.mood_text = FACE_SLEEP
+            self.mood_text = ""
             self._update_bubble()
             return
         now = time.time()
@@ -739,10 +813,10 @@ class Meter(Gtk.Window):
                 if w and w.get("resets_at", 0) > now]
         used = max([float(w.get("used_percentage") or 0) for w in live] or [0])
         self.mood = next((m for limit, m in MOODS if used < limit), "empty")
-        text = next((face for limit, face in FACES if used < limit), FACE_EMPTY)
-        if self.mood == "empty":
+        text = ""  # sin nada que decir: solo la cara
+        if self.mood == "empty":  # agotado: esto sí conviene tenerlo a la vista
             full = min(w["resets_at"] for w in live if float(w.get("used_percentage") or 0) >= 100)
-            text += (" vuelvo en " if full - now < 86400 else " vuelvo el ") + until(full)
+            text = ("Agotado · vuelvo en " if full - now < 86400 else "Agotado · vuelvo el ") + until(full)
         self.mood_text = text
         self._update_bubble()
 

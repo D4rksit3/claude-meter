@@ -2,12 +2,13 @@
 
 ![El muñequito con su carita y la tarjeta de uso abierta al pasar el mouse](docs/captura.png)
 
-Widget pequeño para Linux que se queda **siempre encima** de las demás ventanas. En reposo solo se ve el muñequito, sin fondo, con un globito con una **carita que cambia según tu consumo** (😄 → 😊 → 🙂 → 😐 → 😓 → 😫 → 😵, y 😴 si te fuiste); **al pasar el mouse** aparece cuánto llevas usado de tu plan de Claude:
+Widget pequeño para Linux que se queda **siempre encima** de las demás ventanas. En reposo solo se ve el muñequito, sin fondo, con **su cara cambiando según tu consumo**, como un emoji: ojos ^^ y boca abierta (😄), sonrisa con rubor (😊), 🙂, boca recta (😐), párpados caídos y gotita de sudor (😓), cejas tristes y lagrimita (😫), ojos en X (😵) y dormido si te fuiste (😴). El globito solo aparece cuando tiene algo que decir; **al pasar el mouse** aparece cuánto llevas usado de tu plan de Claude:
 
 - **Sesión (5 h)** y **Semana**: porcentaje usado, barra (verde → ámbar desde 60 % → rojo desde 85 %) y cuándo se reinicia
 - el **muñequito pixelado de Claude Code**, animado, que cambia de ánimo según el uso: feliz saltando y saludando con poco (< 50 %), tranquila (< 75 %), cansada (< 90 %), triste con lagrimita (< 100 %) y agotada al llegar al límite, con la hora en que vuelve
 - **mientras Claude trabaja** el muñeco teclea ("Trabajando…") y **cuando te pregunta algo o pide permiso** se rasca la cabeza con un signo de pregunta ("Tengo una duda…")
 - **comenta lo que haces**, como si te viera: cuando cambias de programa ("¡A programar! 💻", "Modo hacker activado 😎"), cuando cambia la canción en Spotify ("🎵 Buen tema: …"), cuando te vas ("Zzz… te espero", se duerme) y cuando vuelves ("¡Volviste! 👋"); si llevas 50 min seguidos te sugiere una pausa, y avisa al cruzar 50/75/90 % de la sesión
+- los mensajes se ven 30 s (con el mouse encima no se van) y el último queda en la tarjeta, por si no lo viste
 - además, cada 2,5–5 min suelta una frase de **motivación** ("Paso a paso se llega lejos", "Hecho es mejor que perfecto"), de **cuidado** ("¿Tomaste agua? 💧") o una **pregunta** ("¿Cuál es la meta de hoy?"); se apaga con clic derecho → *Que me hable cuando no lo uso*
 - **cuando Claude termina una tarea** te felicita ("¡Listo! Buen trabajo 💪", "¡Misión cumplida!")
 - **un clic** sobre el muñeco y reacciona ("¡Ey!", "¡Jaja, cosquillas!")
