@@ -12,6 +12,7 @@ cada vez que Claude responde; este widget solo los lee.
 import json
 import math
 import os
+import random
 import time
 
 # En Wayland solo las ventanas X11 pueden pedir "siempre encima"
@@ -29,6 +30,20 @@ ACTIVITY = os.path.expanduser("~/.cache/claude-meter-activity.json")  # lo escri
 WORK_STALE = 10 * 60    # "trabajando" sin eventos nuevos por más de esto: probablemente se cortó
 ASK_STALE = 2 * 3600    # una pregunta sin responder deja de mostrarse pasado esto
 ACTIVITY_TEXT = {"work": "Trabajando…", "ask": "Tengo una duda…"}
+
+# cuando no se usa Claude por un rato, el muñeco intenta conversar (se puede apagar con clic derecho)
+IDLE_AFTER = 15 * 60          # minutos sin uso antes de empezar a hablar
+CHAT_EVERY = (90, 240)        # segundos entre un mensaje y otro (al azar en ese rango)
+CHAT_SHOW = 9                 # segundos que se ve cada mensaje
+IDLE_LINES = [
+    "¿Hacemos algo?",
+    "Psst… ¿seguimos?",
+    "Estoy aburrido…",
+    "¿Le damos a algún pendiente?",
+    "¿Revisamos algo juntos?",
+    "Aquí sigo, por si acaso",
+]
+POKE_LINES = ["¡Ey!", "¡Jaja, cosquillas!", "¿Me necesitas?", "¡Aquí estoy!", "¡Hola! 👋", "¿Trabajamos?"]
 CONF_DIR = os.path.expanduser("~/.config/claude-meter")
 CONF = os.path.join(CONF_DIR, "config.json")
 STALE_AFTER = 60 * 60  # pasado esto, el uso desde otros lados (web, móvil) puede no estar reflejado
@@ -92,7 +107,8 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
     """
     ux, uy = 3, 6               # cada pixel es el doble de alto que de ancho, como las celdas de la terminal
     w = 2 * math.pi / LOOP      # frecuencias enteras de w: el ciclo cierra sin saltos
-    hop = -abs(math.sin(w * 3 * t)) * 5 if mood == "happy" else 0
+    lively = mood in ("happy", "wave")
+    hop = -abs(math.sin(w * 3 * t)) * 5 if lively else 0
     sway = round(math.sin(w * 2 * t)) * 0.5 if mood == "ok" else 0
     sink = {"tired": 2, "sad": 3, "empty": 5, "sleep": 3}.get(mood, 0)
     breathe = math.sin(w * t * (1 if mood in ("sad", "empty", "sleep") else 2)) * 0.4
@@ -116,8 +132,8 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
         px_rect(3, 2, 12, 2),                               # cuerpo
     ]
     # bracitos: arriba saludando si está feliz, abajo si está decaído
-    if mood == "happy":
-        up = math.sin(w * 6 * t) > 0
+    if lively:
+        up = math.sin(w * (12 if mood == "wave" else 6) * t) > 0
         parts += [px_rect(1, 1 if up else 2, 2), px_rect(15, 2 if up else 1, 2)]
     elif mood == "work":   # manos sobre el teclado, una y otra
         parts += [px_rect(1.5, 2.7 if tap else 3.1, 1.5), px_rect(15, 3.1 if tap else 2.7, 1.5)]
@@ -131,7 +147,7 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
     else:
         parts += [px_rect(1, 2, 2), px_rect(15, 2, 2)]
     # patitas: caminan cuando está feliz, quietas si no
-    step = mood == "happy" and math.sin(w * 6 * t) > 0
+    step = lively and math.sin(w * 6 * t) > 0
     for i, cx in enumerate((4, 6, 11, 13)):
         lift = 0.3 if step and i % 2 == 0 else 0
         parts.append(px_rect(cx, 4 - lift, 1, 1))
@@ -139,7 +155,7 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
     # ojos: huecos en la cabeza
     blink = (t % (LOOP / 2)) < 0.15
     for ex in (5, 12):
-        if mood == "sleep" or (blink and mood in ("happy", "ok", "tired", "work", "ask")):
+        if mood == "sleep" or (blink and mood in ("happy", "wave", "ok", "tired", "work", "ask")):
             parts.append(px_rect(ex, 1.65, 1, 0.2, hole))
         elif mood == "tired":
             parts.append(px_rect(ex, 1.4, 1, 0.6, hole))
@@ -153,7 +169,7 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
                          'stroke-width="1" stroke-linecap="round"/>'.format(cx - 1.6, cy - 1.6, 3.2, cx + 1.6, hole))
         else:
             parts.append(px_rect(ex, 1, 1, 1, hole))
-    if mood == "happy":  # cachetes
+    if lively:  # cachetes
         parts += [px_rect(3.5, 1.65, 1, 0.3, "#f6b3a6"), px_rect(13.5, 1.65, 1, 0.3, "#f6b3a6")]
     if mood == "sad":    # lagrimita que cae
         drop = t / LOOP * 4 % 1
@@ -202,6 +218,12 @@ class Meter(Gtk.Window):
         self.mood = "sleep"
         self.mood_text = MOOD_TEXT["sleep"]
         self.activity = None  # "work", "ask" o None
+        self.data = None
+        self.last_seen = 0      # último momento en que se usó Claude Code
+        self.chat_text = None   # mensaje espontáneo o reacción a un clic
+        self.chat_until = 0
+        self.next_chat = time.time() + random.randint(*CHAT_EVERY)
+        self.press = None       # clic izquierdo pendiente: arrastre o "toque"
         self.dragging = False
         self.drag_end_id = 0
         self.hide_id = 0
@@ -313,7 +335,10 @@ class Meter(Gtk.Window):
 
     def _build_buddy(self):
         root = self._hover_box(self)
+        root.add_events(Gdk.EventMask.POINTER_MOTION_MASK | Gdk.EventMask.BUTTON_RELEASE_MASK)
         root.connect("button-press-event", self._on_press)
+        root.connect("motion-notify-event", self._on_motion)
+        root.connect("button-release-event", self._on_release)
         buddy = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         root.add(buddy)
         # globito con el ánimo y el muñeco, sin fondo
@@ -394,17 +419,15 @@ class Meter(Gtk.Window):
 
     def _on_press(self, widget, event):
         if event.button == 1 and event.type == Gdk.EventType.BUTTON_PRESS:
-            # mientras se arrastra no se abre el detalle
-            self.dragging = True
-            if self.hide_id:
-                GLib.source_remove(self.hide_id)
-                self.hide_id = 0
-            self.popup.hide()
-            self.begin_move_drag(event.button, int(event.x_root), int(event.y_root), event.time)
-            self._end_drag_later()
+            # todavía no se sabe si es arrastre o un toque: lo decide el movimiento
+            self.press = (event.x_root, event.y_root)
         elif event.button == 3:
             self.popup.hide()
             menu = Gtk.Menu()
+            item = Gtk.CheckMenuItem(label="Que me hable cuando no lo uso")
+            item.set_active(self.config.get("chatty", True))
+            item.connect("toggled", self._toggle_chatty)
+            menu.append(item)
             item = Gtk.MenuItem(label="Llevar a la esquina")
             item.connect("activate", lambda *_: self._to_corner())
             menu.append(item)
@@ -414,6 +437,66 @@ class Meter(Gtk.Window):
             menu.show_all()
             menu.popup_at_pointer(event)
         return True
+
+    def _on_motion(self, widget, event):
+        if self.press and math.hypot(event.x_root - self.press[0], event.y_root - self.press[1]) > 4:
+            self.press = None
+            # mientras se arrastra no se abre el detalle
+            self.dragging = True
+            if self.hide_id:
+                GLib.source_remove(self.hide_id)
+                self.hide_id = 0
+            self.popup.hide()
+            self.begin_move_drag(1, int(event.x_root), int(event.y_root), event.time)
+            self._end_drag_later()
+        return False
+
+    def _on_release(self, widget, event):
+        if event.button == 1 and self.press:
+            self.press = None
+            self._say(random.choice(POKE_LINES), 3)
+        return False
+
+    def _toggle_chatty(self, item):
+        self.config["chatty"] = item.get_active()
+        if not item.get_active():
+            self.chat_until = 0
+            self._update_bubble()
+        self._save_pos()
+
+    # ---------- conversación ----------
+    def _say(self, text, seconds):
+        self.chat_text = text
+        self.chat_until = time.time() + seconds
+        self._update_bubble()
+
+    def _idle_line(self):
+        now = time.time()
+        hour = time.localtime().tm_hour
+        lines = list(IDLE_LINES)
+        if 6 <= hour < 12:
+            lines.append("¡Buenos días! ¿Empezamos?")
+        elif hour >= 22 or hour < 5:
+            lines.append("Ya es tarde… ¿descansamos?")
+        if now - self.last_seen > 2 * 3600:
+            lines.append("Te extraño…")
+        five = (self.data or {}).get("five_hour")
+        if five and five.get("resets_at", 0) > now and five.get("used_percentage", 0) < 50:
+            lines.append("Te queda {:.0f}% de esta sesión, ¡aprovechémoslo!".format(100 - five["used_percentage"]))
+        return random.choice(lines)
+
+    def _tick_chat(self, now):
+        if self.activity:  # trabajando o preguntando: nada de charla
+            self.chat_until = 0
+            return
+        if self.chat_text and now >= self.chat_until:
+            self.chat_text = None
+            self._update_bubble()
+        idle = now - self.last_seen
+        if (self.config.get("chatty", True) and self.last_seen and idle >= IDLE_AFTER
+                and now >= self.next_chat and now >= self.chat_until):
+            self._say(self._idle_line(), CHAT_SHOW)
+            self.next_chat = now + random.randint(*CHAT_EVERY)
 
     # ---------- mascota ----------
     def _frame(self, mood, i):
@@ -430,7 +513,8 @@ class Meter(Gtk.Window):
         if self.get_mapped():
             n = int(LOOP * 1000 / FRAME_MS)
             i = int((time.time() - self.t0) * 1000 / FRAME_MS) % n
-            self.mascot.set_from_pixbuf(self._frame(self.activity or self.mood, i))
+            chatting = time.time() < self.chat_until
+            self.mascot.set_from_pixbuf(self._frame(self.activity or ("wave" if chatting else self.mood), i))
         return True
 
     def _poll_activity(self):
@@ -440,13 +524,19 @@ class Meter(Gtk.Window):
                   if now - v.get("at", 0) < (ASK_STALE if v.get("state") == "asking" else WORK_STALE)}
         # una pregunta pendiente en cualquier sesión gana: es lo que requiere tu atención
         activity = "ask" if "asking" in states else "work" if "working" in states else None
+        seen = [v.get("at", 0) for v in sessions.values()] + [(self.data or {}).get("updated_at", 0)]
+        self.last_seen = max(seen)
+        if activity:
+            self.last_seen = now
         if activity != self.activity:
             self.activity = activity
             self._update_bubble()
+        self._tick_chat(now)
         return True
 
     def _update_bubble(self):
-        self.mood_lbl.set_text(ACTIVITY_TEXT.get(self.activity) or self.mood_text)
+        chat = self.chat_text if time.time() < self.chat_until else None
+        self.mood_lbl.set_text(ACTIVITY_TEXT.get(self.activity) or chat or self.mood_text)
 
     def _set_mood(self, data):
         if not data:
@@ -503,6 +593,7 @@ class Meter(Gtk.Window):
         self.model.set_text(data.get("model") or "")
         self._set_limit(self.five, data.get("five_hour"))
         self._set_limit(self.week, data.get("seven_day"))
+        self.data = data
         self._set_mood(data)
         updated = data.get("updated_at", 0)
         ctx = self.foot.get_style_context()

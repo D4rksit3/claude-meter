@@ -7,11 +7,13 @@ Widget pequeño para Linux que se queda **siempre encima** de las demás ventana
 - **Sesión (5 h)** y **Semana**: porcentaje usado, barra (verde → ámbar desde 60 % → rojo desde 85 %) y cuándo se reinicia
 - el **muñequito pixelado de Claude Code**, animado, que cambia de ánimo según el uso: feliz saltando y saludando con poco (< 50 %), tranquila (< 75 %), cansada (< 90 %), triste con lagrimita (< 100 %) y agotada al llegar al límite, con la hora en que vuelve
 - **mientras Claude trabaja** el muñeco teclea ("Trabajando…") y **cuando te pregunta algo o pide permiso** se rasca la cabeza con un signo de pregunta ("Tengo una duda…")
+- **si no lo usas por 15 min**, el muñeco intenta conversar cada pocos minutos ("¿Hacemos algo?", "Te queda 80% de esta sesión, ¡aprovechémoslo!"…) saludando con el bracito; se apaga con clic derecho → *Que me hable cuando no lo uso*
+- **un clic** sobre el muñeco y reacciona ("¡Ey!", "¡Jaja, cosquillas!")
 - modelo en uso y hace cuánto fue el último uso de Claude Code (se pone ámbar pasada 1 hora)
 
 Hecho con Python + GTK 3. Probado en Ubuntu 26.04 con GNOME (Wayland).
 
-> Proyecto personal, no afiliado a Anthropic.
+> Proyecto personal, no afiliado a Anthropic. El muñequito pixelado es la mascota de Claude Code.
 
 ## Cómo obtiene los datos
 
@@ -63,7 +65,8 @@ Por ejemplo, si lo usas como `root` y el widget corre con tu usuario, indica dó
 
 ## Uso
 
-- **Mover:** arrastra con clic izquierdo (recuerda la posición).
+- **Mover:** arrastra con clic izquierdo (recuerda la posición). Un clic sin arrastrar es un "toque".
+- **Esquina:** clic derecho → *Llevar a la esquina*.
 - **Cerrar:** clic derecho → *Cerrar medidor*. Se vuelve a abrir desde el menú de aplicaciones.
 
 ## Ver también
