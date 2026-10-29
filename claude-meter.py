@@ -162,24 +162,45 @@ def ago(epoch):
 
 
 class Meter(Gtk.Window):
+    """Ventana del muñeco. Solo se mueve cuando el usuario la arrastra; el detalle va en otra ventana."""
+
     def __init__(self):
         super().__init__(title="Claude meter")
         self.config = load_json(CONF, {})
         self.save_pos_id = 0
         self.mood = "sleep"
-        self.shift = None  # (dx, dy) mientras la ventana está corrida para mostrar el detalle
         self.dragging = False
         self.drag_end_id = 0
         self.hide_id = 0
         self.t0 = time.time()
         self.frames = {}  # ánimo -> lista de pixbufs del ciclo
+        self._setup_css()
         self._setup_window()
-        self._build_ui()
+        self._build_buddy()
+        self._build_details()
+        anchor = self.config.get("anchor")
+        if anchor:
+            self.move(*anchor)
+        else:
+            self._to_corner()
         self.refresh()
         GLib.timeout_add_seconds(5, self.refresh)
         GLib.timeout_add(FRAME_MS, self._animate)
 
-    # ---------- ventana ----------
+    # ---------- ventana del muñeco ----------
+    def _setup_css(self):
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS)
+        Gtk.StyleContext.add_provider_for_screen(
+            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    @staticmethod
+    def _transparent(win):
+        visual = win.get_screen().get_rgba_visual()
+        if visual:
+            win.set_visual(visual)
+            win.set_app_paintable(True)
+
     def _setup_window(self):
         self.set_decorated(False)
         self.set_keep_above(True)
@@ -189,23 +210,9 @@ class Meter(Gtk.Window):
         self.set_type_hint(Gdk.WindowTypeHint.UTILITY)
         self.set_icon_name("claude-meter")
         self.stick()
-        visual = self.get_screen().get_rgba_visual()
-        if visual:
-            self.set_visual(visual)
-            self.set_app_paintable(True)
-
-        provider = Gtk.CssProvider()
-        provider.load_from_data(CSS)
-        Gtk.StyleContext.add_provider_for_screen(
-            Gdk.Screen.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-
-        pos = self.config.get("pos")
-        if pos:
-            self.move(*pos)
-        else:
-            mon = Gdk.Display.get_default().get_primary_monitor() or Gdk.Display.get_default().get_monitor(0)
-            area = mon.get_workarea()
-            self.move(area.x + area.width - 260, area.y + area.height - 160)
+        self._transparent(self)
+        # al cambiar de tamaño (texto del globito) se conserva la esquina inferior derecha: el muñeco no se corre
+        self.set_gravity(Gdk.Gravity.SOUTH_EAST)
         self.connect("configure-event", self._on_configure)
         self.connect("destroy", Gtk.main_quit)
 
@@ -229,13 +236,19 @@ class Meter(Gtk.Window):
 
     def _save_pos(self):
         self.save_pos_id = 0
-        if self.shift:  # posición desplazada temporalmente para que quepa el detalle
-            return False
-        self.config["pos"] = list(self.get_position())
+        self.config.pop("pos", None)  # formato viejo (esquina superior izquierda)
+        self.config["anchor"] = list(self.get_position())
         os.makedirs(CONF_DIR, exist_ok=True)
         with open(CONF, "w") as f:
             json.dump(self.config, f)
         return False
+
+    def _to_corner(self):
+        """Pega el muñeco a la esquina inferior derecha del área útil (sin tapar barras del sistema)."""
+        mon = Gdk.Display.get_default().get_primary_monitor() or Gdk.Display.get_default().get_monitor(0)
+        area = mon.get_workarea()
+        size = self.get_preferred_size()[1]
+        self.move(area.x + area.width - size.width - 8, area.y + area.height - size.height - 8)
 
     # ---------- interfaz ----------
     def _label(self, css, xalign=0):
@@ -256,21 +269,20 @@ class Meter(Gtk.Window):
         box.pack_start(reset, False, False, 0)
         return pct, bar, reset
 
-    def _build_ui(self):
+    def _hover_box(self, win):
         root = Gtk.EventBox()
         root.add_events(Gdk.EventMask.ENTER_NOTIFY_MASK | Gdk.EventMask.LEAVE_NOTIFY_MASK)
-        root.connect("button-press-event", self._on_press)
         root.connect("enter-notify-event", self._on_enter)
         root.connect("leave-notify-event", self._on_leave)
-        self.add(root)
+        win.add(root)
+        return root
 
-        # detalle a la izquierda y muñeco a la derecha, ambos pegados abajo
-        outer = Gtk.Box(spacing=6)
-        root.add(outer)
+    def _build_buddy(self):
+        root = self._hover_box(self)
+        root.connect("button-press-event", self._on_press)
         buddy = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        buddy.set_valign(Gtk.Align.END)
-
-        # en reposo: globito con el ánimo y el muñeco, sin fondo
+        root.add(buddy)
+        # globito con el ánimo y el muñeco, sin fondo
         self.mood_lbl = self._label("bubble")
         self.mood_lbl.set_halign(Gtk.Align.END)
         self.mascot = Gtk.Image()
@@ -278,11 +290,16 @@ class Meter(Gtk.Window):
         self.mascot.set_halign(Gtk.Align.END)
         buddy.pack_start(self.mood_lbl, False, False, 0)
         buddy.pack_start(self.mascot, False, False, 0)
+        self.show_all()
 
-        # al pasar el mouse: tarjeta con los porcentajes
-        self.details = Gtk.EventBox()
-        self.details.set_valign(Gtk.Align.END)
-        self.details.get_style_context().add_class("card")
+    def _build_details(self):
+        """Tarjeta con los porcentajes: ventana emergente aparte que se abre a la izquierda del muñeco."""
+        self.popup = Gtk.Window(type=Gtk.WindowType.POPUP)
+        self._transparent(self.popup)
+        root = self._hover_box(self.popup)
+        card = Gtk.EventBox()
+        card.get_style_context().add_class("card")
+        root.add(card)
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         box.set_size_request(210, -1)
         # el padding de CSS no aplica a un EventBox; el margen va en la caja
@@ -290,7 +307,7 @@ class Meter(Gtk.Window):
         box.set_margin_bottom(8)
         box.set_margin_start(12)
         box.set_margin_end(12)
-        self.details.add(box)
+        card.add(box)
 
         top = Gtk.Box(spacing=6)
         title = self._label("head")
@@ -304,12 +321,7 @@ class Meter(Gtk.Window):
         self.week = self._limit_row(box, "Semana")
         self.foot = self._label("foot")
         box.pack_start(self.foot, False, False, 2)
-        outer.pack_start(self.details, False, False, 0)
-        outer.pack_start(buddy, False, False, 0)
-
-        self.show_all()
-        self.details.set_no_show_all(True)
-        self.details.hide()
+        root.show_all()
 
     # ---------- detalle al pasar el mouse ----------
     def _on_enter(self, widget, event):
@@ -318,52 +330,46 @@ class Meter(Gtk.Window):
         if self.hide_id:
             GLib.source_remove(self.hide_id)
             self.hide_id = 0
-        if not self.details.get_visible():
+        if not self.popup.get_visible():
             self._show_details()
         return False
 
     def _on_leave(self, widget, event):
         # al entrar a un hijo también llega un "leave": ese no cuenta
         if event.detail != Gdk.NotifyType.INFERIOR and not self.hide_id:
-            self.hide_id = GLib.timeout_add(250, self._hide_details)
+            self.hide_id = GLib.timeout_add(300, self._hide_details)
         return False
 
     def _show_details(self):
-        """Abre el detalle hacia la izquierda y arriba, dejando el muñeco exactamente donde está."""
-        x, y = self.get_position()
-        w0, h0 = self.get_size()
-        self.details.show()
-        nat = self.get_preferred_size()[1]  # el tamaño nuevo aún no se aplicó
-        dx, dy = nat.width - w0, max(0, nat.height - h0)
-        self.shift = (dx, dy)
-        self.move(x - dx, y - dy)
+        """A la izquierda del muñeco y alineada abajo con él; a la derecha si no cabe."""
+        ox, oy = self.get_window().get_origin()[1:]
+        w, h = self.get_size()
+        pw, ph = (lambda n: (n.width, n.height))(self.popup.get_preferred_size()[1])
+        area = Gdk.Display.get_default().get_monitor_at_window(self.get_window()).get_workarea()
+        x = ox - pw - 6
+        if x < area.x:
+            x = ox + w + 6
+        y = max(area.y, min(oy + h - ph, area.y + area.height - ph))
+        self.popup.move(x, y)
+        self.popup.show()
 
     def _hide_details(self):
         self.hide_id = 0
-        self.details.hide()
-        self.resize(1, 1)
-        if self.shift:
-            x, y = self.get_position()
-            dx, dy = self.shift
-            self.shift = None
-            self.move(x + dx, y + dy)
+        self.popup.hide()
         return False
 
     def _on_press(self, widget, event):
         if event.button == 1 and event.type == Gdk.EventType.BUTTON_PRESS:
-            # se arrastra solo el muñeco: cerrar el detalle primero y no reabrirlo hasta soltar
+            # mientras se arrastra no se abre el detalle
             self.dragging = True
             if self.hide_id:
                 GLib.source_remove(self.hide_id)
                 self.hide_id = 0
-            args = (event.button, int(event.x_root), int(event.y_root), event.time)
-            if self.details.get_visible():
-                self._hide_details()
-                GLib.timeout_add(60, lambda: self.begin_move_drag(*args))  # tras aplicar el tamaño chico
-            else:
-                self.begin_move_drag(*args)
+            self.popup.hide()
+            self.begin_move_drag(event.button, int(event.x_root), int(event.y_root), event.time)
             self._end_drag_later()
         elif event.button == 3:
+            self.popup.hide()
             menu = Gtk.Menu()
             item = Gtk.MenuItem(label="Llevar a la esquina")
             item.connect("activate", lambda *_: self._to_corner())
@@ -374,15 +380,6 @@ class Meter(Gtk.Window):
             menu.show_all()
             menu.popup_at_pointer(event)
         return True
-
-    def _to_corner(self):
-        """Pega el muñeco a la esquina inferior derecha del área útil (sin tapar barras del sistema)."""
-        if self.details.get_visible():
-            self._hide_details()
-        mon = Gdk.Display.get_default().get_monitor_at_window(self.get_window())
-        area = mon.get_workarea()
-        size = self.get_preferred_size()[1]
-        self.move(area.x + area.width - size.width - 8, area.y + area.height - size.height - 8)
 
     # ---------- mascota ----------
     def _frame(self, mood, i):
