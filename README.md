@@ -6,8 +6,11 @@ Widget pequeño para Linux que se queda **siempre encima** de las demás ventana
 
 - **Sesión (5 h)** y **Semana**: porcentaje usado, barra (verde → ámbar desde 60 % → rojo desde 85 %) y cuándo se reinicia
 - el **muñequito pixelado de Claude Code**, animado, que cambia de ánimo según el uso: feliz saltando y saludando con poco (< 50 %), tranquila (< 75 %), cansada (< 90 %), triste con lagrimita (< 100 %) y agotada al llegar al límite, con la hora en que vuelve
+- **reacciona al arrastrarlo**: vuela gritando de emoción, aleteando y con las patitas colgando; al soltarlo a veces comenta el aterrizaje ("¡Otra vez, otra vez!"), y **si lo sacudes** queda mareado unos segundos, con ojos en espiral y estrellitas dando vueltas ("Todo me da vueltas… 😵‍💫")
+- **doble clic: salta**: se agacha, pega un brinco de verdad en la pantalla y se aplasta al caer; a veces con **voltereta** en el aire ("¡Tachán! ✨"). Un clic simple sigue siendo un toque ("¡Jaja, cosquillas!")
+- **te sigue con los ojos**: mira hacia donde está el mouse (8 direcciones, girando un poco la cara); si lo pasas encima o lo dejas quieto un rato, vuelve a mirarte a ti
 - **mientras Claude trabaja** el muñeco teclea ("Trabajando…") y **cuando te pregunta algo o pide permiso** se rasca la cabeza con un signo de pregunta ("Tengo una duda…")
-- **comenta lo que haces**, como si te viera: cuando cambias de programa ("¡A programar! 💻", "Modo hacker activado 😎"), cuando cambia la canción en Spotify ("🎵 Buen tema: …"), cuando te vas ("Zzz… te espero", se duerme) y cuando vuelves ("¡Volviste! 👋"); si llevas 50 min seguidos te sugiere una pausa, y avisa al cruzar 50/75/90 % de la sesión
+- **comenta lo que haces**, como si te viera: cuando cambias de programa ("¡A programar! 💻", "Modo hacker activado 😎"), cuando cambia la canción ("🎵 Buen tema: …"), cuando te vas ("Zzz… te espero", se duerme) y cuando vuelves ("¡Volviste! 👋"); si llevas 50 min seguidos te sugiere una pausa, y avisa al cruzar 50/75/90 % de la sesión
 - los mensajes se ven 30 s (con el mouse encima no se van) y el último queda en la tarjeta, por si no lo viste
 - además, cada 2,5–5 min suelta una frase de **motivación** ("Paso a paso se llega lejos", "Hecho es mejor que perfecto"), de **cuidado** ("¿Tomaste agua? 💧") o una **pregunta** ("¿Cuál es la meta de hoy?"); se apaga con clic derecho → *Que me hable cuando no lo uso*
 - **cuando Claude termina una tarea** te felicita ("¡Listo! Buen trabajo 💪", "¡Misión cumplida!")
@@ -43,11 +46,15 @@ Igual que la status line, acepta `CLAUDE_METER_ACTIVITY` y `CLAUDE_METER_OWNER`.
 Todo es local y nada sale de tu equipo:
 
 - **Si estás o te fuiste:** segundos sin teclado ni mouse, que da GNOME (`org.gnome.Mutter.IdleMonitor`).
-- **Qué suena:** Spotify por MPRIS.
+- **Qué suena:** cualquier reproductor por MPRIS (Spotify, Rhythmbox, YouTube en Firefox/Chrome…). Mientras suena algo, **el muñeco baila** con notitas musicales; se apaga con clic derecho → "Bailar con la música".
 - **Qué programa usas (opcional):** en Wayland ninguna app puede saberlo por su cuenta, así que el repo trae una
   extensión mínima de GNOME (`gnome-extension/`) que solo entrega la *clase* de la ventana enfocada (`code`,
   `firefox`…), nunca títulos ni contenido. El instalador la copia pero **no la activa**: cierra y abre sesión y
   actívala en la app *Extensiones*. Sin ella, todo lo demás funciona igual.
+- **Dónde está el mouse:** solo su posición (x, y), para seguirlo con los ojos. La misma extensión la entrega,
+  porque en Wayland una app no ve el mouse fuera de sus ventanas; sin ella, solo lo sigue mientras pasa por
+  ventanas X11. Si ya tenías la extensión, al actualizarla hay que cerrar y abrir sesión para que GNOME cargue
+  la versión nueva.
 
 ## Requisitos
 

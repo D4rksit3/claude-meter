@@ -5,8 +5,12 @@ Los datos los escribe la status line de Claude Code en ~/.cache/claude-meter.jso
 cada vez que Claude responde; este widget solo los lee.
 
 - La mascota cambia de ánimo según el uso: feliz con poco, cansada y triste al acercarse al límite.
+- Cuando suena música (Spotify, el navegador o cualquier reproductor MPRIS) baila.
 - En reposo solo se ve el muñeco y un globito con su ánimo; al pasar el mouse aparecen los porcentajes.
-- Arrastrar con clic izquierdo para moverlo (recuerda la posición).
+- Sigue el mouse con los ojos (y gira un poco la cara); si lo dejas quieto, vuelve a mirarte.
+- Arrastrar con clic izquierdo para moverlo (recuerda la posición): vuela agitando los brazos, y si lo
+  sacudes queda mareado un rato.
+- Doble clic: pega un salto (a veces con voltereta).
 - Clic derecho: cerrar.
 """
 import json
@@ -39,6 +43,10 @@ AWAY_AFTER = 5 * 60           # sin teclado ni mouse por esto: te fuiste
 STREAK_BREAK = 50 * 60        # tiempo seguido frente a la pantalla antes de sugerir una pausa
 CLAUDE_LONG = 3 * 60          # si Claude lleva esto trabajando, lo comenta
 CLAUDE_UNUSED = 15 * 60       # sin usar Claude por esto: puede invitarte a usarlo
+LOOK_MS = 150                 # cada cuánto mira dónde está el mouse
+LOOK_NEAR = 40                # mouse encima o muy cerca del muñeco: te mira a ti
+LOOK_REST = 8                 # mouse quieto por esto: deja de seguirlo y vuelve a mirarte
+LOOK_MOODS = ("great", "happy", "ok", "meh", "tired", "sad", "wave", "dance")  # el resto mira a algo propio
 EXT_BUS = ("org.gnome.Shell", "/pe/d4rksit3/ClaudeMeter", "pe.d4rksit3.ClaudeMeter")  # gnome-extension/
 
 # tipo de programa según la clase de su ventana (nunca se leen títulos)
@@ -73,6 +81,9 @@ QUESTION_LINES = [
 ]
 BACK_LINES = ["¡Volviste! 👋", "¡Hola de nuevo! ¿Seguimos?", "Te extrañé 😄"]
 SONG_LINES = ["🎵 Buen tema: {}", "¡Esa me gusta! 🎶", "🎶 {}, buena elección"]
+DANCE_LINES = ["¡Música! A bailar 💃", "¡Esa se baila! 🕺", "No puedo quedarme quieto 🎶", "♪ Tu ru ru ♪"]
+STOP_LINES = ["¿Y la música? 🥺", "Se acabó la fiesta…", "Ponle play otra vez 🎶"]
+MUSIC_QUIET = 2 * 60          # tras una pausa así de larga, volver a sonar cuenta como "empezó la música"
 IDLE_LINES = [
     "¿Hacemos algo?",
     "Psst… ¿seguimos?",
@@ -108,6 +119,16 @@ CARE_LINES = [
     "Hombros abajo, respira hondo",
 ]
 DONE_LINES = ["¡Listo! Buen trabajo 💪", "¡Terminamos! 🎉", "¡Hecho! ¿Qué sigue?", "¡Eso quedó! ✨", "¡Misión cumplida!"]
+LAND_LINES = ["¡Aterrizaje perfecto! 🛬", "¡Otra vez, otra vez!", "¡Wiii! ¿Aquí me quedo?", "Bonita vista desde aquí 👀"]
+DIZZY_LINES = ["Todo me da vueltas… 😵‍💫", "¡No me sacudas! 🌀", "Uff… veo estrellitas ✨"]
+SHAKE_FLIPS = 4               # cambios de dirección al arrastrar…
+SHAKE_WINDOW = 1.5            # …en estos segundos: lo estás sacudiendo
+DIZZY_SECS = 4                # lo que le dura el mareo
+JUMP_SECS = 0.9              # agacharse, volar y aterrizar
+JUMP_AIR = (0.15, 0.75)       # tramo en el aire dentro del salto
+JUMP_PX = 56                  # altura del salto en pantalla (se mueve la ventana entera)
+JUMP_FLIP = 0.35              # probabilidad de que el salto sea con voltereta
+JUMP_LINES = ["¡Tachán! ✨", "¡Hop!", "¿Viste eso? 😎", "¡10 de 10!"]
 POKE_LINES = ["¡Ey!", "¡Jaja, cosquillas!", "¿Me necesitas?", "¡Aquí estoy!", "¡Hola! 👋", "¿Trabajamos?"]
 CONF_DIR = os.path.expanduser("~/.config/claude-meter")
 CONF = os.path.join(CONF_DIR, "config.json")
@@ -171,17 +192,23 @@ FACE = {
     "work":  dict(eyes="down", mouth="small"),                      # concentrado
     "ask":   dict(eyes="up", mouth="o", brows="raised"),            # pensando
     "wave":  dict(eyes="arc", mouth="talk", blush=True),            # hablando
+    "dance": dict(eyes="arc", mouth="sing", blush=True),            # bailando y cantando
+    "fly":   dict(eyes="arc", mouth="grin", blush=True),            # ¡wiii! lo están arrastrando
+    "dizzy": dict(eyes="swirl", mouth="wavy"),                      # mareado de tanto sacudirlo
+    "jump":  dict(eyes="arc", mouth="grin", blush=True),            # saltando (doble clic)
+    "flip":  dict(eyes="arc", mouth="grin", blush=True),            # saltando con voltereta
 }
 COLORS = {"great": "#ef7d52", "happy": "#e8774f", "ok": "#d97757", "meh": "#d08062", "tired": "#c98463",
           "sad": "#b58c79", "empty": "#978a84", "sleep": "#b58c79"}
 
 
-def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
+def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok", gaze=(0, 0)):
     """Un cuadro del muñequito pixelado de Claude Code, en una caja de 56x56.
 
     Rejilla de 18x5 celdas: cuerpo, dos ojitos, bracitos a los lados y cuatro patitas, más una cara
     (cejas, boca, rubor, sudor, lágrima) que cambia con el ánimo.
-    mood "work" (teclea), "ask" (duda) y "wave" (habla) toman el color del ánimo de uso que indica tint.
+    mood "work" (teclea), "ask" (duda), "wave" (habla) y "dance" (baila) toman el color del ánimo de uso
+    que indica tint. gaze (-1, 0 o 1 en x e y) es hacia dónde mira: los ojos se corren y la cara la mitad.
     """
     ux, uy = 3, 6               # cada pixel es el doble de alto que de ancho, como las celdas de la terminal
     w = 2 * math.pi / LOOP      # frecuencias enteras de w: el ciclo cierra sin saltos
@@ -189,6 +216,15 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
     droopy = mood in ("tired", "sad", "empty")
     hop = -abs(math.sin(w * 3 * t)) * (5 if mood != "happy" else 3) if lively else 0
     sway = round(math.sin(w * 2 * t)) * 0.5 if mood in ("ok", "meh") else 0
+    # baile: 12 golpes por ciclo (~109 bpm); medio ciclo de lado a lado y medio con los brazos arriba
+    beat = w * 6 * t
+    side = 1 if math.sin(beat) > 0 else -1
+    roof = t >= LOOP / 2
+    if mood == "dance":
+        hop = -abs(math.sin(beat)) * (4 if roof else 2.5)
+        sway = 0 if roof else side * 0.5
+    elif mood == "dizzy":  # se tambalea
+        sway = math.sin(w * 4 * t) * 0.5
     sink = {"tired": 2, "sad": 3, "empty": 5, "sleep": 3}.get(mood, 0)
     breathe = math.sin(w * t * (1 if droopy or mood == "sleep" else 2)) * 0.4
     x0 = 1 + sway * ux
@@ -216,12 +252,24 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
     if lively:
         up = math.sin(w * (12 if mood == "wave" else 6) * t) > 0
         parts += [px_rect(1, 1 if up else 2, 2), px_rect(15, 2 if up else 1, 2)]
+    elif mood == "dance":
+        if roof:           # las dos manos arriba, marcando el golpe
+            pump = 0.2 if abs(math.sin(beat)) > 0.5 else 0.9
+            parts += [px_rect(1, pump, 2), px_rect(15, pump, 2)]
+        else:              # una arriba y otra abajo, cambian con cada paso
+            parts += [px_rect(1, 1 if side > 0 else 2.4, 2), px_rect(15, 2.4 if side > 0 else 1, 2)]
+    elif mood in ("jump", "flip"):  # brazos arriba mientras está en el aire
+        air = JUMP_AIR[0] <= t < JUMP_AIR[1]
+        parts += [px_rect(1, 0.2 if air else 2.4, 2), px_rect(15, 0.2 if air else 2.4, 2)]
+    elif mood == "fly":    # aletea con las dos manos, rapidísimo
+        flap = 0.2 if math.sin(w * 16 * t) > 0 else 1.2
+        parts += [px_rect(1, flap, 2), px_rect(15, flap, 2)]
     elif mood == "work":   # manos sobre el teclado, una y otra
         parts += [px_rect(1.5, 2.7 if tap else 3.1, 1.5), px_rect(15, 3.1 if tap else 2.7, 1.5)]
     elif mood == "ask":    # una mano rascándose la cabeza
         scratch = math.sin(w * 8 * t) * 0.12
         parts += [px_rect(1, 2, 2), px_rect(16, 0.9, 1, 1.6), px_rect(14.6, 0.35 + scratch, 2.4, 0.55)]
-    elif droopy:
+    elif droopy or mood == "dizzy":
         parts += [px_rect(1.5, 3, 1.5), px_rect(15, 3, 1.5)]
     else:
         parts += [px_rect(1, 2, 2), px_rect(15, 2, 2)]
@@ -229,23 +277,29 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
     step = lively and math.sin(w * 6 * t) > 0
     for i, cx in enumerate((4, 6, 11, 13)):
         lift = 0.3 if step and i % 2 == 0 else 0
+        if mood == "dance":  # zapatea: una pata y la otra con cada golpe
+            lift = 0.35 if (i % 2 == 0) == (side > 0) else 0
+        if mood == "fly":    # patitas colgando que se balancean en el aire
+            parts.append(px_rect(cx + math.sin(w * 8 * t + i) * 0.3, 4, 1, 1.6))
+            continue
         parts.append(px_rect(cx, 4 - lift, 1, 1))
 
     # ---- cara ----
-    cx = x0 + 9 * ux                 # centro horizontal de la cara
-    ey = y0 + 1.3 * uy               # altura de los ojos
-    my = y0 + 2.25 * uy              # altura de la boca
+    gx, gy = gaze[0] * 0.7, gaze[1] * 0.25  # en celdas: los ojos se corren esto, el resto de la cara la mitad
+    cx = x0 + (9 + gx / 2) * ux      # centro horizontal de la cara
+    ey = y0 + (1.3 + gy) * uy        # altura de los ojos
+    my = y0 + (2.25 + gy / 2) * uy   # altura de la boca
     blink = (t % (LOOP / 2)) < 0.15
     eyes = "closed" if blink and face["eyes"] in ("round", "half", "down", "up") else face["eyes"]
-    for ex in (5, 12):
+    for ex in (5 + gx, 12 + gx):
         ecx = x0 + (ex + 0.5) * ux
         if eyes == "round":
-            parts.append(px_rect(ex, 0.85, 1, 0.9, ink))
+            parts.append(px_rect(ex, 0.85 + gy, 1, 0.9, ink))
         elif eyes == "arc":          # ^ ^
             parts.append(stroke("M{:.2f} {:.2f} Q{:.2f} {:.2f} {:.2f} {:.2f}".format(
                 ecx - 2, ey + 1.2, ecx, ey - 2.4, ecx + 2, ey + 1.2), 1.3))
         elif eyes == "half":         # párpados caídos
-            parts.append(px_rect(ex, 1.2, 1, 0.5, ink))
+            parts.append(px_rect(ex, 1.2 + gy, 1, 0.5, ink))
             parts.append(stroke("M{:.2f} {:.2f} L{:.2f} {:.2f}".format(ecx - 2.2, ey - 1.2, ecx + 2.2, ey - 1.2), 1))
         elif eyes == "closed":
             parts.append(stroke("M{:.2f} {:.2f} Q{:.2f} {:.2f} {:.2f} {:.2f}".format(
@@ -257,12 +311,17 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
             parts.append(px_rect(ex, 1.25, 1, 0.55, ink))
         elif eyes == "up":           # mirando hacia arriba, pensando
             parts.append(px_rect(ex + 0.3, 0.55, 1, 0.6, ink))
+        elif eyes == "swirl":        # espiral que gira
+            turn = w * 8 * t
+            pts = [(ecx + math.cos(turn + k * 0.7) * (0.3 + k * 0.17), ey + math.sin(turn + k * 0.7) * (0.3 + k * 0.17))
+                   for k in range(12)]
+            parts.append(stroke("M" + " L".join("{:.2f} {:.2f}".format(*p) for p in pts), 0.9))
 
     brows = face.get("brows")
     if brows == "sad":               # cejas que suben hacia el centro
         parts.append(stroke("M{:.2f} {:.2f} L{:.2f} {:.2f} M{:.2f} {:.2f} L{:.2f} {:.2f}".format(
-            x0 + 4.6 * ux, y0 + 0.55 * uy, x0 + 6.6 * ux, y0 + 0.25 * uy,
-            x0 + 11.4 * ux, y0 + 0.25 * uy, x0 + 13.4 * ux, y0 + 0.55 * uy), 1))
+            x0 + (4.6 + gx) * ux, y0 + (0.55 + gy) * uy, x0 + (6.6 + gx) * ux, y0 + (0.25 + gy) * uy,
+            x0 + (11.4 + gx) * ux, y0 + (0.25 + gy) * uy, x0 + (13.4 + gx) * ux, y0 + (0.55 + gy) * uy), 1))
     elif brows == "raised":
         parts.append(stroke("M{:.2f} {:.2f} Q{:.2f} {:.2f} {:.2f} {:.2f}".format(
             x0 + 11.6 * ux, y0 + 0.3 * uy, x0 + 12.8 * ux, y0 + 0.05 * uy, x0 + 14 * ux, y0 + 0.3 * uy), 1))
@@ -270,6 +329,8 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
     mouth = face["mouth"]
     if mouth == "talk":              # abre y cierra la boca mientras habla
         mouth = "grin" if math.sin(w * 30 * t) > 0 else "small"
+    elif mouth == "sing":            # canta: "o" y sonrisa cada dos golpes
+        mouth = "o" if math.sin(w * 3 * t) > 0 else "grin" if roof else "smile"
     if mouth == "grin":              # sonrisa grande, abierta
         parts.append(stroke("M{:.2f} {:.2f} Q{:.2f} {:.2f} {:.2f} {:.2f} Z".format(
             cx - 4, my - 1, cx, my + 4.5, cx + 4, my - 1), 1, ink))
@@ -289,7 +350,8 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
 
     if face.get("blush"):
         parts += ['<ellipse cx="{:.2f}" cy="{:.2f}" rx="2" ry="1.1" fill="#f6b3a6" opacity="0.9" '
-                  'shape-rendering="geometricPrecision"/>'.format(x0 + bx * ux, y0 + 2.05 * uy) for bx in (4.2, 13.8)]
+                  'shape-rendering="geometricPrecision"/>'.format(x0 + (bx + gx / 2) * ux, y0 + (2.05 + gy / 2) * uy)
+                  for bx in (4.2, 13.8)]
     if face.get("sweat"):            # gotita de sudor en la frente
         sx, sy = x0 + 14.2 * ux, y0 + 0.3 * uy + (t / LOOP * 2 % 1) * 3
         parts.append('<path d="M{0:.2f} {1:.2f} q-1.6 2.6 0 3.4 q1.6 -0.8 0 -3.4 Z" fill="#7cc4f0" '
@@ -297,7 +359,7 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
     if face.get("tear"):             # lagrimita que cae
         drop = t / LOOP * 4 % 1
         parts.append('<ellipse cx="{:.2f}" cy="{:.2f}" rx="0.9" ry="1.3" fill="#6db3e8" opacity="{:.2f}" '
-                     'shape-rendering="geometricPrecision"/>'.format(x0 + 5.5 * ux, ey + 3 + drop * 10, 1 - drop))
+                     'shape-rendering="geometricPrecision"/>'.format(x0 + (5.5 + gx) * ux, ey + 3 + drop * 10, 1 - drop))
 
     if mood == "work":   # teclado delante, tapando las patitas, con teclas que se iluminan
         parts.append(px_rect(2, 3.35, 14, 0.95, "#3a3a3a"))
@@ -310,12 +372,44 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok"):
         bob = math.sin(w * 4 * t) * 1.5
         parts.append('<text x="47" y="{:.1f}" font-family="sans-serif" font-weight="bold" font-size="14" '
                      'fill="#ffd166" stroke="#161616" stroke-width="0.8" paint-order="stroke">?</text>'.format(19 + bob))
+    if mood == "dance":  # notitas que suben y se desvanecen, a un lado y al otro
+        for k in range(3):
+            ph = (t / LOOP * 3 + k / 3) % 1
+            nx = (47 if k % 2 == 0 else 1) + math.sin(ph * 2 * math.pi) * 1.5
+            parts.append('<text x="{:.1f}" y="{:.1f}" font-family="sans-serif" font-weight="bold" font-size="9" '
+                         'fill="#ffd166" stroke="#161616" stroke-width="0.6" paint-order="stroke" '
+                         'opacity="{:.2f}">{}</text>'.format(nx, 24 - ph * 15, 1 - ph, "♪♫"[k % 2]))
+    if mood == "dizzy":  # estrellitas dando vueltas sobre la cabeza
+        for k in range(3):
+            a = w * 4 * t + k * 2 * math.pi / 3
+            sx, sy, r = 28 + math.cos(a) * 16, y0 - 2 + math.sin(a) * 3, 1.6 + math.sin(a) * 0.5
+            parts.append('<path d="M{0:.2f} {1:.2f} L{2:.2f} {3:.2f} L{0:.2f} {4:.2f} L{5:.2f} {3:.2f} Z" fill="#ffd166" '
+                         'stroke="#161616" stroke-width="0.4" opacity="{6:.2f}" shape-rendering="geometricPrecision"/>'.format(
+                             sx, sy - 2 * r, sx + r, sy, sy + 2 * r, sx - r, 0.75 + math.sin(a) * 0.25))
     if mood in ("sleep", "empty"):
         for k in range(2):
             ph = (t / LOOP * 4 + k * 0.5) % 1
             parts.append('<text x="{:.1f}" y="{:.1f}" font-family="monospace" font-weight="bold" '
                          'font-size="{:.1f}" fill="#a7a7a7" opacity="{:.2f}">z</text>'.format(
                              42 + ph * 6, max(8, y0 - 1 - ph * 8), 6 + ph * 4, 1 - ph))
+
+    if mood in ("jump", "flip"):  # se agacha para tomar impulso, se estira en el aire y se aplasta al caer
+        feet, mid = y0 + 5 * uy, y0 + 2.5 * uy
+        a, b = JUMP_AIR
+        if t < a:
+            sx, sy = 1 + 0.12 * t / a, 1 - 0.18 * t / a
+        elif t < b:
+            p = (t - a) / (b - a)
+            sx, sy = 1 - 0.08 * (1 - p), 1 + 0.1 * (1 - p)
+        else:
+            p = (t - b) / (JUMP_SECS - b)
+            sx, sy = 1 + 0.12 * math.sin(math.pi * p), 1 - 0.18 * math.sin(math.pi * p)
+        g = "translate(28 {0:.2f}) scale({1:.3f} {2:.3f}) translate(-28 -{0:.2f})".format(feet, sx, sy)
+        if mood == "flip" and a <= t < b:  # vuelta completa en el aire, sobre su centro, encogido para caber de lado
+            p = (t - a) / (b - a)
+            g = "translate(28 {0:.2f}) rotate({1:.1f}) scale({2:.3f}) translate(-28 -{0:.2f}) ".format(
+                mid, 360 * p, 1 - 0.3 * math.sin(math.pi * p)) + g
+        parts = ['<g transform="{}">'.format(g)] + parts + ["</g>"]
 
     # recortado: sin el aire de arriba/abajo, para poder pegarlo a los bordes de la pantalla
     vb = (6, 44) if crop else (0, 56)
@@ -365,14 +459,28 @@ class Meter(Gtk.Window):
         self.app_kind = None
         self.kind_said = {}
         self.ext_retry = 0      # la extensión de GNOME es opcional: si no está, se reintenta cada minuto
+        self.ptr_retry = 0      # ídem para la posición del mouse (una extensión vieja no la tiene)
+        self.gaze = (0, 0)      # hacia dónde mira el muñeco
+        self.ptr_last = None
+        self.ptr_moved = 0
         self.song = None
+        self.music = False      # suena algo en algún reproductor: baila
+        self.music_stop = 0
         self.work_since = 0
         self.long_said = False
         self.prev_used = None
         self.press = None       # clic izquierdo pendiente: arrastre o "toque"
         self.dragging = False
         self.drag_end_id = 0
+        self.drag_since = 0
+        self.drag_x = None      # para saber si lo sacuden: última x y hacia dónde iba
+        self.drag_dir = 0
+        self.drag_flips = []
+        self.shaken = False
+        self.dizzy_until = 0
         self.hide_id = 0
+        self.jump = None        # (ánimo "jump"/"flip", cuándo empezó, posición de partida)
+        self.poke_id = 0        # un clic espera por si llega el segundo (doble clic)
         self.t0 = time.time()
         self.frames = {}  # ánimo -> lista de pixbufs del ciclo
         self._setup_css()
@@ -387,6 +495,7 @@ class Meter(Gtk.Window):
         self.refresh()
         GLib.timeout_add_seconds(5, self.refresh)
         GLib.timeout_add(FRAME_MS, self._animate)
+        GLib.timeout_add(LOOK_MS, self._look)
         GLib.timeout_add(1000, self._poll_activity)
 
     # ---------- ventana del muñeco ----------
@@ -427,10 +536,40 @@ class Meter(Gtk.Window):
     def _drag_done(self):
         self.drag_end_id = 0
         self.dragging = False
+        now = time.time()
+        if self.shaken:
+            self.dizzy_until = now + DIZZY_SECS
+            self._say(random.choice(DIZZY_LINES), 6, force=True)
+        elif now - self.drag_since > 1.7 and random.random() < 0.5:  # voló un rato (0,7 s son la espera)
+            self._say(random.choice(LAND_LINES), 5, force=True)
         return False
+
+    def _start_drag(self):
+        self.dragging = True
+        self.drag_since = time.time()
+        self.drag_x = None
+        self.drag_dir = 0
+        self.drag_flips = []
+        self.shaken = False
+        self.dizzy_until = 0
+
+    def _track_shake(self):
+        """Cuenta los cambios de dirección horizontales: varios seguidos y rápidos es que lo sacuden."""
+        x = self.get_position()[0]
+        if self.drag_x is not None and abs(x - self.drag_x) >= 4:
+            way = 1 if x > self.drag_x else -1
+            now = time.time()
+            if self.drag_dir and way != self.drag_dir:
+                self.drag_flips = [f for f in self.drag_flips if now - f < SHAKE_WINDOW] + [now]
+                if len(self.drag_flips) >= SHAKE_FLIPS:
+                    self.shaken = True
+            self.drag_dir = way
+        if self.drag_x is None or abs(x - self.drag_x) >= 4:
+            self.drag_x = x
 
     def _on_configure(self, *_):
         if self.dragging:
+            self._track_shake()
             self._end_drag_later()
         if self.save_pos_id:
             GLib.source_remove(self.save_pos_id)
@@ -538,7 +677,7 @@ class Meter(Gtk.Window):
     # ---------- detalle al pasar el mouse ----------
     def _on_enter(self, widget, event):
         self.hovering = True
-        if self.dragging:
+        if self.dragging or self.jump:
             return False
         if self.hide_id:
             GLib.source_remove(self.hide_id)
@@ -573,7 +712,13 @@ class Meter(Gtk.Window):
         return False
 
     def _on_press(self, widget, event):
-        if event.button == 1 and event.type == Gdk.EventType.BUTTON_PRESS:
+        if event.button == 1 and event.type == Gdk.EventType._2BUTTON_PRESS:
+            self.press = None  # el segundo clic no es un toque ni arrastre
+            if self.poke_id:
+                GLib.source_remove(self.poke_id)
+                self.poke_id = 0
+            self._start_jump()
+        elif event.button == 1 and event.type == Gdk.EventType.BUTTON_PRESS:
             # todavía no se sabe si es arrastre o un toque: lo decide el movimiento
             self.press = (event.x_root, event.y_root)
         elif event.button == 3:
@@ -582,6 +727,10 @@ class Meter(Gtk.Window):
             item = Gtk.CheckMenuItem(label="Que me hable cuando no lo uso")
             item.set_active(self.config.get("chatty", True))
             item.connect("toggled", self._toggle_chatty)
+            menu.append(item)
+            item = Gtk.CheckMenuItem(label="Bailar con la música")
+            item.set_active(self.config.get("dance", True))
+            item.connect("toggled", self._toggle_dance)
             menu.append(item)
             item = Gtk.MenuItem(label="Llevar a la esquina")
             item.connect("activate", lambda *_: self._to_corner())
@@ -597,7 +746,7 @@ class Meter(Gtk.Window):
         if self.press and math.hypot(event.x_root - self.press[0], event.y_root - self.press[1]) > 4:
             self.press = None
             # mientras se arrastra no se abre el detalle
-            self.dragging = True
+            self._start_drag()
             if self.hide_id:
                 GLib.source_remove(self.hide_id)
                 self.hide_id = 0
@@ -609,7 +758,39 @@ class Meter(Gtk.Window):
     def _on_release(self, widget, event):
         if event.button == 1 and self.press:
             self.press = None
-            self._say(random.choice(POKE_LINES), 5, force=True)
+            if not self.poke_id:  # se responde solo si no llega un segundo clic
+                wait = Gtk.Settings.get_default().get_property("gtk-double-click-time")
+                self.poke_id = GLib.timeout_add(wait, self._poke)
+        return False
+
+    def _poke(self):
+        self.poke_id = 0
+        self._say(random.choice(POKE_LINES), 5, force=True)
+        return False
+
+    def _start_jump(self):
+        if self.jump or self.dragging:
+            return
+        if self.hide_id:
+            GLib.source_remove(self.hide_id)
+            self.hide_id = 0
+        self.popup.hide()
+        self.jump = ("flip" if random.random() < JUMP_FLIP else "jump", time.time(), self.get_position())
+        GLib.timeout_add(16, self._jump_step)
+
+    def _jump_step(self):
+        """Mueve la ventana en una parábola mientras dura el tramo en el aire; al final la deja donde estaba."""
+        _, start, (x, y) = self.jump
+        t = time.time() - start
+        a, b = JUMP_AIR
+        p = min(max((t - a) / (b - a), 0), 1)
+        self.move(x, y - round(4 * JUMP_PX * p * (1 - p)))
+        if t < JUMP_SECS:
+            return True
+        self.move(x, y)
+        self.jump = None
+        if random.random() < 0.3:
+            self._say(random.choice(JUMP_LINES), 4, force=True)
         return False
 
     def _toggle_chatty(self, item):
@@ -617,6 +798,10 @@ class Meter(Gtk.Window):
         if not item.get_active():
             self.chat_until = 0
             self._update_bubble()
+        self._save_pos()
+
+    def _toggle_dance(self, item):
+        self.config["dance"] = item.get_active()
         self._save_pos()
 
     # ---------- conversación ----------
@@ -653,14 +838,23 @@ class Meter(Gtk.Window):
             return None
         return next((kind for kind, keys in APP_KINDS if any(k in app for k in keys)), None)
 
-    def _spotify(self):
+    def _now_playing(self):
+        """(título, suena): el primer reproductor MPRIS que esté sonando (Spotify, navegador, Rhythmbox…)."""
         try:
-            props = self._dbus("org.mpris.MediaPlayer2.spotify", "/org/mpris/MediaPlayer2",
-                               "org.freedesktop.DBus.Properties", "GetAll",
-                               GLib.Variant("(s)", ("org.mpris.MediaPlayer2.Player",)))[0]
+            names = self._dbus("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "ListNames")[0]
         except GLib.Error:
             return None, False
-        return (props.get("Metadata") or {}).get("xesam:title"), props.get("PlaybackStatus") == "Playing"
+        for name in names:
+            if not name.startswith("org.mpris.MediaPlayer2."):
+                continue
+            try:
+                props = self._dbus(name, "/org/mpris/MediaPlayer2", "org.freedesktop.DBus.Properties", "GetAll",
+                                   GLib.Variant("(s)", ("org.mpris.MediaPlayer2.Player",)))[0]
+            except GLib.Error:
+                continue
+            if props.get("PlaybackStatus") == "Playing":
+                return (props.get("Metadata") or {}).get("xesam:title"), True
+        return None, False
 
     def _idle_line(self, now):
         """Charla espontánea: motivación, cuidado, preguntas y lo que se sabe del contexto."""
@@ -682,7 +876,7 @@ class Meter(Gtk.Window):
         return random.choice(lines)
 
     def _brain(self, now):
-        """Cada segundo: mira si estás, qué usas, qué suena y qué hace Claude, y decide si comentar."""
+        """Cada segundo: mira si estás, qué suena, qué usas y qué hace Claude, y decide si comentar."""
         self.ticks += 1
         if self.chat_text and self.hovering:  # con el mouse encima no se va: da tiempo a leer
             self.chat_until = max(self.chat_until, now + 3)
@@ -708,6 +902,22 @@ class Meter(Gtk.Window):
                     and now - self.last_break_tip >= STREAK_BREAK):
                 if self._say("Llevas {} seguido, ¿una pausa? ☕".format(span(now - self.streak_start)), 15):
                     self.last_break_tip = now
+
+        # ¿qué suena? (cada 2 s, aunque no estés: baila solo)
+        if self.ticks % 2 == 1:
+            title, playing = self._now_playing()
+            if playing != self.music and not self.away:
+                if playing and now - self.music_stop > MUSIC_QUIET:
+                    self._say(random.choice(DANCE_LINES), 8)
+                elif not playing and random.random() < 0.3:
+                    self._say(random.choice(STOP_LINES), 8)
+            if self.music and not playing:
+                self.music_stop = now
+            self.music = playing
+            if playing and title and title != self.song:
+                if self.song is not None and not self.away and random.random() < 0.5:
+                    self._say(random.choice(SONG_LINES).format(title))
+                self.song = title
         if self.away:
             return
 
@@ -719,14 +929,6 @@ class Meter(Gtk.Window):
                 if kind and now - self.kind_said.get(kind, 0) > 600:
                     if self._say(random.choice(APP_LINES[kind])):
                         self.kind_said[kind] = now
-
-        # ¿qué suena? (cada 5 s)
-        if self.ticks % 5 == 0:
-            title, playing = self._spotify()
-            if playing and title and title != self.song:
-                if self.song is not None and random.random() < 0.5:
-                    self._say(random.choice(SONG_LINES).format(title))
-                self.song = title
 
         # Claude lleva rato trabajando
         if self.activity == "work" and not self.long_said and now - self.work_since > CLAUDE_LONG:
@@ -747,12 +949,44 @@ class Meter(Gtk.Window):
         self.prev_used = used
 
     # ---------- mascota ----------
+    def _pointer(self):
+        """Dónde está el mouse en la pantalla. En Wayland solo GNOME Shell lo sabe siempre (extensión);
+        sin ella, GTK solo lo ve mientras pasa por ventanas X11."""
+        now = time.time()
+        if now >= self.ptr_retry:
+            try:
+                return self._dbus(*EXT_BUS, "Pointer")
+            except GLib.Error:
+                self.ptr_retry = now + 60
+        return Gdk.Display.get_default().get_default_seat().get_pointer().get_position()[1:]
+
+    def _look(self):
+        """Mira hacia el mouse: 8 direcciones, o a ti si está encima, cerca o quieto hace rato."""
+        if not self.get_mapped() or self.away:
+            return True
+        now = time.time()
+        px, py = self._pointer()
+        if (px, py) != self.ptr_last:
+            self.ptr_last = (px, py)
+            self.ptr_moved = now
+        ox, oy = self.get_window().get_origin()[1:]
+        alloc = self.mascot.get_allocation()
+        dx = px - (ox + alloc.x + alloc.width / 2)
+        dy = py - (oy + alloc.y + alloc.height / 2)
+        dist = math.hypot(dx, dy)
+        if dist < LOOK_NEAR or now - self.ptr_moved > LOOK_REST:
+            self.gaze = (0, 0)
+        else:  # cada eje cuenta si el mouse está a menos de 60° de él
+            self.gaze = (round(dx / dist), round(dy / dist))
+        return True
+
     def _frame(self, mood, i):
-        key = (mood, self.mood)  # trabajar/dudar se pintan con el color del ánimo de uso
+        gaze = self.gaze if mood in LOOK_MOODS else (0, 0)
+        key = (mood, self.mood, gaze)  # trabajar/dudar se pintan con el color del ánimo de uso
         frames = self.frames.setdefault(key, [None] * int(LOOP * 1000 / FRAME_MS))
         if frames[i] is None:  # se dibuja la primera vez que se necesita y queda en caché
             loader = GdkPixbuf.PixbufLoader.new_with_type("svg")
-            loader.write(mascot_svg(mood, i * FRAME_MS / 1000, tint=self.mood).encode())
+            loader.write(mascot_svg(mood, i * FRAME_MS / 1000, tint=self.mood, gaze=gaze).encode())
             loader.close()
             frames[i] = loader.get_pixbuf()
         return frames[i]
@@ -762,8 +996,14 @@ class Meter(Gtk.Window):
             n = int(LOOP * 1000 / FRAME_MS)
             i = int((time.time() - self.t0) * 1000 / FRAME_MS) % n
             chatting = time.time() < self.chat_until
-            idle_look = "wave" if chatting else "sleep" if self.away else self.mood
-            self.mascot.set_from_pixbuf(self._frame(self.activity or idle_look, i))
+            dancing = self.music and self.config.get("dance", True)
+            idle_look = "dance" if dancing else "wave" if chatting else "sleep" if self.away else self.mood
+            # que lo lleven volando o lo mareen pasa por encima de todo
+            handled = "fly" if self.dragging else "dizzy" if time.time() < self.dizzy_until else None
+            if self.jump:  # el salto no se repite en ciclo: se cuenta desde que empezó
+                handled = self.jump[0]
+                i = min(int((time.time() - self.jump[1]) * 1000 / FRAME_MS), int(JUMP_SECS * 1000 / FRAME_MS))
+            self.mascot.set_from_pixbuf(self._frame(handled or self.activity or idle_look, i))
         return True
 
     def _poll_activity(self):
