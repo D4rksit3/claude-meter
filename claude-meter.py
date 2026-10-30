@@ -11,6 +11,7 @@ cada vez que Claude responde; este widget solo los lee.
 - Arrastrar con clic izquierdo para moverlo (recuerda la posición): vuela agitando los brazos, y si lo
   sacudes queda mareado un rato.
 - Doble clic: pega un salto (a veces con voltereta).
+- Pomodoro desde el clic derecho: 25 min concentrado (con vincha y callado), luego descanso con cafecito.
 - Clic derecho: cerrar.
 """
 import json
@@ -129,6 +130,11 @@ JUMP_AIR = (0.15, 0.75)       # tramo en el aire dentro del salto
 JUMP_PX = 56                  # altura del salto en pantalla (se mueve la ventana entera)
 JUMP_FLIP = 0.35              # probabilidad de que el salto sea con voltereta
 JUMP_LINES = ["¡Tachán! ✨", "¡Hop!", "¿Viste eso? 😎", "¡10 de 10!"]
+POMO_FOCUS = 25 * 60          # pomodoro: concentración…
+POMO_BREAK = 5 * 60           # …descanso corto…
+POMO_LONG = 15 * 60           # …y largo cada POMO_LONG_EVERY pomodoros
+POMO_LONG_EVERY = 4
+POMO_WAIT = 10 * 60           # tras el descanso espera un clic para el siguiente; pasado esto, se olvida
 POKE_LINES = ["¡Ey!", "¡Jaja, cosquillas!", "¿Me necesitas?", "¡Aquí estoy!", "¡Hola! 👋", "¿Trabajamos?"]
 CONF_DIR = os.path.expanduser("~/.config/claude-meter")
 CONF = os.path.join(CONF_DIR, "config.json")
@@ -197,6 +203,8 @@ FACE = {
     "dizzy": dict(eyes="swirl", mouth="wavy"),                      # mareado de tanto sacudirlo
     "jump":  dict(eyes="arc", mouth="grin", blush=True),            # saltando (doble clic)
     "flip":  dict(eyes="arc", mouth="grin", blush=True),            # saltando con voltereta
+    "focus": dict(eyes="round", mouth="flat", brows="firm"),        # pomodoro: concentrado, con vincha
+    "rest":  dict(eyes="closed", mouth="smile", blush=True),        # pomodoro: descanso con cafecito
 }
 COLORS = {"great": "#ef7d52", "happy": "#e8774f", "ok": "#d97757", "meh": "#d08062", "tired": "#c98463",
           "sad": "#b58c79", "empty": "#978a84", "sleep": "#b58c79"}
@@ -261,6 +269,8 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok", gaze=(0, 0)):
     elif mood in ("jump", "flip"):  # brazos arriba mientras está en el aire
         air = JUMP_AIR[0] <= t < JUMP_AIR[1]
         parts += [px_rect(1, 0.2 if air else 2.4, 2), px_rect(15, 0.2 if air else 2.4, 2)]
+    elif mood == "rest":   # una mano sostiene la taza
+        parts += [px_rect(1, 2, 2), px_rect(14.5, 2.6, 1.5)]
     elif mood == "fly":    # aletea con las dos manos, rapidísimo
         flap = 0.2 if math.sin(w * 16 * t) > 0 else 1.2
         parts += [px_rect(1, flap, 2), px_rect(15, flap, 2)]
@@ -283,6 +293,12 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok", gaze=(0, 0)):
             parts.append(px_rect(cx + math.sin(w * 8 * t + i) * 0.3, 4, 1, 1.6))
             continue
         parts.append(px_rect(cx, 4 - lift, 1, 1))
+
+    if mood == "focus":  # vincha roja con dos tiras que flamean
+        red = "#d64545"
+        parts.append(px_rect(3, 0.02, 12, 0.45, red))
+        parts += [px_rect(15, 0.08 + math.sin(w * 10 * t) * 0.1, 2, 0.25, red),
+                  px_rect(15, 0.38 + math.sin(w * 10 * t + 1) * 0.1, 1.6, 0.22, red)]
 
     # ---- cara ----
     gx, gy = gaze[0] * 0.7, gaze[1] * 0.25  # en celdas: los ojos se corren esto, el resto de la cara la mitad
@@ -322,6 +338,10 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok", gaze=(0, 0)):
         parts.append(stroke("M{:.2f} {:.2f} L{:.2f} {:.2f} M{:.2f} {:.2f} L{:.2f} {:.2f}".format(
             x0 + (4.6 + gx) * ux, y0 + (0.55 + gy) * uy, x0 + (6.6 + gx) * ux, y0 + (0.25 + gy) * uy,
             x0 + (11.4 + gx) * ux, y0 + (0.25 + gy) * uy, x0 + (13.4 + gx) * ux, y0 + (0.55 + gy) * uy), 1))
+    elif brows == "firm":            # cejas que bajan hacia el centro: decidido
+        parts.append(stroke("M{:.2f} {:.2f} L{:.2f} {:.2f} M{:.2f} {:.2f} L{:.2f} {:.2f}".format(
+            x0 + (4.6 + gx) * ux, y0 + (0.52 + gy) * uy, x0 + (6.6 + gx) * ux, y0 + (0.74 + gy) * uy,
+            x0 + (11.4 + gx) * ux, y0 + (0.74 + gy) * uy, x0 + (13.4 + gx) * ux, y0 + (0.52 + gy) * uy), 1.1))
     elif brows == "raised":
         parts.append(stroke("M{:.2f} {:.2f} Q{:.2f} {:.2f} {:.2f} {:.2f}".format(
             x0 + 11.6 * ux, y0 + 0.3 * uy, x0 + 12.8 * ux, y0 + 0.05 * uy, x0 + 14 * ux, y0 + 0.3 * uy), 1))
@@ -379,6 +399,14 @@ def mascot_svg(mood, t, px=MASCOT, crop=True, tint="ok", gaze=(0, 0)):
             parts.append('<text x="{:.1f}" y="{:.1f}" font-family="sans-serif" font-weight="bold" font-size="9" '
                          'fill="#ffd166" stroke="#161616" stroke-width="0.6" paint-order="stroke" '
                          'opacity="{:.2f}">{}</text>'.format(nx, 24 - ph * 15, 1 - ph, "♪♫"[k % 2]))
+    if mood == "rest":   # taza de café con vapor
+        cup = "#f2f2f2"
+        parts += [px_rect(15.5, 2.2, 2, 1.6, cup), px_rect(17.5, 2.5, 0.5, 0.8, cup), px_rect(15.5, 2.2, 2, 0.25, "#6b4226")]
+        for k in range(2):
+            ph = (t / LOOP * 3 + k * 0.5) % 1
+            sx, sy = x0 + (16 + k * 0.9) * ux, y0 + 2.1 * uy - ph * 9
+            parts.append('<path d="M{:.2f} {:.2f} q-1.2 -1.5 0 -3 q1.2 -1.5 0 -3" stroke="#cfcfcf" stroke-width="0.8" '
+                         'fill="none" opacity="{:.2f}" shape-rendering="geometricPrecision"/>'.format(sx, sy, 0.8 * (1 - ph)))
     if mood == "dizzy":  # estrellitas dando vueltas sobre la cabeza
         for k in range(3):
             a = w * 4 * t + k * 2 * math.pi / 3
@@ -480,6 +508,9 @@ class Meter(Gtk.Window):
         self.dizzy_until = 0
         self.hide_id = 0
         self.jump = None        # (ánimo "jump"/"flip", cuándo empezó, posición de partida)
+        pomo = self.config.get("pomo")  # sobrevive a reinicios, pero no a horas con el widget cerrado
+        if pomo and time.time() > pomo["until"] + 60:
+            self.config.pop("pomo")
         self.poke_id = 0        # un clic espera por si llega el segundo (doble clic)
         self.t0 = time.time()
         self.frames = {}  # ánimo -> lista de pixbufs del ciclo
@@ -666,6 +697,8 @@ class Meter(Gtk.Window):
         self.five = self._limit_row(box, "Sesión (5 h)")
         box.pack_start(Gtk.Box(), False, False, 2)
         self.week = self._limit_row(box, "Semana")
+        self.pomo_lbl = self._label("name")
+        box.pack_start(self.pomo_lbl, False, False, 2)
         self.foot = self._label("foot")
         box.pack_start(self.foot, False, False, 2)
         self.last_lbl = self._label("lastmsg")
@@ -732,6 +765,13 @@ class Meter(Gtk.Window):
             item.set_active(self.config.get("dance", True))
             item.connect("toggled", self._toggle_dance)
             menu.append(item)
+            if self._pomo_phase():
+                item = Gtk.MenuItem(label="Detener pomodoro")
+                item.connect("activate", lambda *_: self._pomo_stop())
+            else:
+                item = Gtk.MenuItem(label="🍅 Pomodoro ({} min)".format(POMO_FOCUS // 60))
+                item.connect("activate", lambda *_: self._pomo_start())
+            menu.append(item)
             item = Gtk.MenuItem(label="Llevar a la esquina")
             item.connect("activate", lambda *_: self._to_corner())
             menu.append(item)
@@ -765,8 +805,76 @@ class Meter(Gtk.Window):
 
     def _poke(self):
         self.poke_id = 0
-        self._say(random.choice(POKE_LINES), 5, force=True)
+        phase = self._pomo_phase()
+        if phase == "wait":
+            self._pomo_start()
+        elif phase == "focus":
+            self._say("¡Shh! Concentración 🤫 quedan {}".format(span(self.config["pomo"]["until"] - time.time())),
+                      5, force=True)
+        else:
+            self._say(random.choice(POKE_LINES), 5, force=True)
         return False
+
+    # ---------- pomodoro ----------
+    def _pomo_phase(self):
+        """"focus", "break", "wait" (terminó el descanso, espera un clic) o None."""
+        return (self.config.get("pomo") or {}).get("phase")
+
+    def _pomo_set(self, phase, seconds, rnd):
+        self.config["pomo"] = {"phase": phase, "until": time.time() + seconds, "round": rnd}
+        self._save_pos()
+        self._update_pomo()
+        self._update_bubble()
+
+    def _pomo_start(self):
+        rnd = (self.config.get("pomo") or {}).get("round", 0) + 1 if self._pomo_phase() == "wait" else 1
+        self._pomo_set("focus", POMO_FOCUS, rnd)
+        self._say("¡A concentrarnos! {} min 🍅".format(POMO_FOCUS // 60), 5, force=True)
+
+    def _pomo_stop(self):
+        self.config.pop("pomo", None)
+        self._save_pos()
+        self._update_pomo()
+        self._update_bubble()
+
+    def _pomo_today(self):
+        done = self.config.get("pomo_done") or {}
+        return done.get("n", 0) if done.get("day") == time.strftime("%Y-%m-%d") else 0
+
+    def _pomo_tick(self, now):
+        """Pasa de concentración a descanso, de descanso a esperar el siguiente, y de esperar a nada."""
+        pomo = self.config.get("pomo")
+        if not pomo or now < pomo["until"]:
+            return
+        if pomo["phase"] == "focus":
+            self.config["pomo_done"] = {"day": time.strftime("%Y-%m-%d"), "n": self._pomo_today() + 1}
+            long = pomo["round"] % POMO_LONG_EVERY == 0
+            rest = POMO_LONG if long else POMO_BREAK
+            self._pomo_set("break", rest, pomo["round"])
+            self._say("¡Pomodoro listo! 🍅 Descansa {} min{}".format(rest // 60, ", te los ganaste" if long else ""),
+                      15, force=True)
+            self._start_jump()
+        elif pomo["phase"] == "break":
+            self._pomo_set("wait", POMO_WAIT, pomo["round"])
+            self._say("¡Se acabó el descanso! 💪", 8, force=True)
+        else:
+            self._pomo_stop()
+
+    def _update_pomo(self):
+        """Línea del pomodoro en la tarjeta: qué toca, cuánto falta y cuántos llevas hoy."""
+        pomo, today = self.config.get("pomo"), self._pomo_today()
+        count = " · {} hoy".format(today) if today else ""
+        if not pomo:
+            text = "🍅 {} pomodoro{} hoy".format(today, "s" if today > 1 else "") if today else ""
+        elif pomo["phase"] == "wait":
+            text = "🍅 Clic al muñeco para otro" + count
+        else:
+            left = max(0, pomo["until"] - time.time())
+            text = "{} · quedan {}{}".format("🍅 Concentrado" if pomo["phase"] == "focus" else "☕ Descanso",
+                                              "{} min".format(math.ceil(left / 60)) if left >= 60 else
+                                              "{} s".format(int(left)), count)
+        self.pomo_lbl.set_text(text)
+        self.pomo_lbl.set_visible(bool(text))
 
     def _start_jump(self):
         if self.jump or self.dragging:
@@ -807,7 +915,8 @@ class Meter(Gtk.Window):
     # ---------- conversación ----------
     def _say(self, text, seconds=CHAT_SHOW, force=False):
         now = time.time()
-        if not force and (now - self.last_said < MIN_GAP or not self.config.get("chatty", True)):
+        if not force and (now - self.last_said < MIN_GAP or not self.config.get("chatty", True)
+                          or self._pomo_phase() == "focus"):  # concentrado no se interrumpe
             return False
         self.chat_text = text
         self.chat_until = now + seconds
@@ -878,6 +987,7 @@ class Meter(Gtk.Window):
     def _brain(self, now):
         """Cada segundo: mira si estás, qué suena, qué usas y qué hace Claude, y decide si comentar."""
         self.ticks += 1
+        self._pomo_tick(now)
         if self.chat_text and self.hovering:  # con el mouse encima no se va: da tiempo a leer
             self.chat_until = max(self.chat_until, now + 3)
         if self.chat_text and now >= self.chat_until:
@@ -998,12 +1108,13 @@ class Meter(Gtk.Window):
             chatting = time.time() < self.chat_until
             dancing = self.music and self.config.get("dance", True)
             idle_look = "dance" if dancing else "wave" if chatting else "sleep" if self.away else self.mood
+            pomo = {"focus": "focus", "break": "rest"}.get(self._pomo_phase())  # concentrado ni baila
             # que lo lleven volando o lo mareen pasa por encima de todo
             handled = "fly" if self.dragging else "dizzy" if time.time() < self.dizzy_until else None
             if self.jump:  # el salto no se repite en ciclo: se cuenta desde que empezó
                 handled = self.jump[0]
                 i = min(int((time.time() - self.jump[1]) * 1000 / FRAME_MS), int(JUMP_SECS * 1000 / FRAME_MS))
-            self.mascot.set_from_pixbuf(self._frame(handled or self.activity or idle_look, i))
+            self.mascot.set_from_pixbuf(self._frame(handled or self.activity or pomo or idle_look, i))
         return True
 
     def _poll_activity(self):
@@ -1036,7 +1147,8 @@ class Meter(Gtk.Window):
         if self.activity == "ask":
             text = ACTIVITY_TEXT["ask"]
         else:
-            text = chat or ("" if self.away else self.mood_text)
+            wait = "Clic para otro 🍅" if self._pomo_phase() == "wait" else ""
+            text = chat or ("" if self.away else wait or self.mood_text)
         self.mood_lbl.set_text(text)
         self.mood_lbl.set_visible(bool(text))
         if self.last_msg:
@@ -1083,6 +1195,7 @@ class Meter(Gtk.Window):
                        else "se reinicia el " + until(win["resets_at"]))
 
     def refresh(self):
+        self._update_pomo()
         data = load_json(DATA, None)
         if not data:
             self.model.set_text("")
